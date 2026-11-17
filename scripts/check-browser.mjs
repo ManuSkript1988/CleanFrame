@@ -8,6 +8,7 @@ const PRIMARY = ['stremio', 'netflix', 'disneyplus', 'youtube', 'appletv', 'prim
 const IDS = ['IkWsFHtOY9.Stremio', 'org.tizen.netflix-app', 'MCmYXNxgcu.DisneyPlus', '9Ur5IzDKqV.TizenYouTube', 'com.samsung.tv.aria-video', 'org.tizen.primevideo', 'mWK87Xghap.ABCiview', 'OyE7OuxlUi.SBSOnDemand', 'org.tizen.apple.apple-music'];
 const NAMES = ['Stremio', 'Netflix', 'Disney+', 'YouTube', 'Apple TV', 'Prime Video', 'ABC iview', 'SBS On Demand', 'Apple Music'];
 const EXTRA = 'AbCdEf1234.FamilyApp', SPOTIFY = 'rJeHak5zRg.Spotify';
+const UTILITY_ACTIONS = ['util.art', 'util.apps', 'util.sound', 'util.settings'], UTILITY_COUNT = UTILITY_ACTIONS.length;
 const UNSAFE_NAME = 'Family <img src=x onerror="window.__catalogXss=1"> & TV';
 const CATALOG = IDS.map((id, i) => ({ id, name: NAMES[i], show: true, iconPath: '' })).concat([
   { id: EXTRA, name: UNSAFE_NAME, show: true, iconPath: '' },
@@ -340,6 +341,20 @@ try {
       }
     }
   });
+  await run('Utility control order and navigation', async () => {
+    await page();
+    for (const layout of ['dock', 'list']) {
+      await look({ layout }); await scene('home');
+      check(layout + ' shows Art Mode, All apps, Sound and Settings', same(await current.locator('#utils .u').evaluateAll(els => els.map(e => e.dataset.action)), UTILITY_ACTIONS));
+      const [back, out, forward] = layout === 'dock' ? ['left', 'up', 'right'] : ['up', 'right', 'down'];
+      await nav(out, ...Array(UTILITY_COUNT).fill(back));
+      const seen = [await current.locator('#utils .u.is-focus').getAttribute('data-action')];
+      for (let i = 0; i < UTILITY_COUNT; i++) { await nav(forward); seen.push(await current.locator('#utils .u.is-focus').getAttribute('data-action')); }
+      check(layout + ' moves through every control without wrapping', same(seen, UTILITY_ACTIONS.concat('util.settings')), seen);
+      await nav('back');
+      check(layout + ' Back from the controls returns to the apps', (await call('where')).zone === 'apps');
+    }
+  });
   await run('Utility control geometry', async () => {
     await page();
     for (const width of [1920, 1280]) {
@@ -348,7 +363,7 @@ try {
         await look({ bg: 'photo', layout, controls, focus: 'glass', font: 'manrope' }); await scene('home');
         if ((await call('where')).zone === 'util') await nav('back');
         await nav(layout === 'dock' ? 'up' : 'right');
-        await nav(...Array(3).fill(layout === 'dock' ? 'left' : 'up'));
+        await nav(...Array(UTILITY_COUNT).fill(layout === 'dock' ? 'left' : 'up'));
         await current.waitForTimeout(180);
         const spacing = await current.evaluate(({ layout, controls }) => {
           const scale = document.getElementById('stage').getBoundingClientRect().width / 1920;
@@ -361,9 +376,9 @@ try {
           });
         }, { layout, controls });
         check(layout + '/' + controls + ' uses spacing between visible children at ' + width,
-          spacing.length === 3 && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
+          spacing.length === UTILITY_COUNT && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
         const focused = [];
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < UTILITY_COUNT; i++) {
           if (i) await nav(layout === 'dock' ? 'right' : 'down');
           focused.push(await current.evaluate(() => {
             const button = document.querySelector('#utils .u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
@@ -474,7 +489,15 @@ try {
     await current.evaluate(() => window.dispatchEvent(new Event('focus'))); await group('samsung'); await act('samsung.settings');
     await current.waitForFunction(() => __tv.calls.length === 5);
     check('TV settings keeps installed target', (await current.evaluate(() => __tv.calls.at(-1))).id === 'com.samsung.tv.coba.setting');
+    await current.evaluate(() => window.dispatchEvent(new Event('focus'))); await scene('home'); await act('util.sound');
+    await current.waitForFunction(() => __tv.calls.length === 6);
+    const sound = await current.evaluate(() => __tv.calls.at(-1));
+    check('Sound control opens Samsung TV settings', sound.method === 'launch' && sound.id === 'com.samsung.tv.coba.setting', sound);
+    check('Sound control claims no active output', !(await current.locator('[data-action="util.sound"]').evaluate(b => /active|is-on|is-current/.test(b.className))));
     await current.evaluate(() => { window.dispatchEvent(new Event('focus')); __tv.launchFailure = true; });
+    await scene('home'); await act('util.sound'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
+    check('Sound control failure is shown', /could not|unavailable|try again/i.test(await current.locator('#stage').innerText()));
+    await nav('back');
     await scene('home'); await act('home.app.netflix'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
     check('Launch failure is shown', /could not|unavailable|try again/i.test(await current.locator('#stage').innerText()));
   });
