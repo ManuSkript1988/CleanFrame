@@ -60,6 +60,7 @@
     home: '<path d="M4 11 12 4.5l8 6.5v8a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1Z"/>',
     undo: '<path d="M9 6 5 10l4 4"/><path d="M5 10h9.5a4.5 4.5 0 0 1 0 9H11"/>',
     check: '<path d="m5.5 12.5 4 4 9-9"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13 7 4 4"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     left: '<path d="m14.5 5-7 7 7 7"/>',
     right: '<path d="m9.5 5 7 7-7 7"/>',
@@ -69,6 +70,20 @@
     tv: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7"/>',
     warn: '<path d="M12 4 2.8 19.5h18.4Z"/><path d="M12 10v4.5M12 17.3v.1"/>'
   };
+  /* HDMI shortcut images. Add a white SVG to assets/icons/, its metrics and one entry here.
+     `name` is the suggested shortcut name until the owner types their own. */
+  var INPUT_IMAGES = [
+    { id: 'playstation', label: 'PlayStation', name: 'PlayStation 5' },
+    { id: 'input-handheld', label: 'Handheld console', name: 'Nintendo Switch 2' },
+    { id: 'input-controller', label: 'Game controller', name: 'Xbox' },
+    { id: 'appletv', label: 'Apple TV', name: 'Apple TV' },
+    { id: 'input-stick', label: 'Streaming stick', name: 'Fire TV' },
+    { id: 'input-disc', label: 'Blu-ray player', name: 'Blu-ray player' },
+    { id: 'input-pc', label: 'PC', name: 'PC' },
+    { id: 'input-receiver', label: 'Receiver', name: 'Receiver' },
+    { id: 'input-hdmi', label: 'HDMI', name: '' }
+  ];
+  var INPUT_CAP = 12, INPUT_NAME_MAX = 40, INPUT_IMAGE_COLS = 5, IME_DONE = 65376, IME_CANCEL = 65385;
 
   /* ---------- State ---------- */
   var REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -91,6 +106,8 @@
 
   /* ---------- Helpers ---------- */
   function app(id) { for (var i = 0; i < APPS.length; i++) if (APPS[i].id === id) return APPS[i]; return null; }
+  function inputImage(id) { for (var i = 0; i < INPUT_IMAGES.length; i++) if (INPUT_IMAGES[i].id === id) return INPUT_IMAGES[i]; return null; }
+  function shortcut(id) { for (var i = 0; i < S.c.inputs.length; i++) if (S.c.inputs[i].id === id) return S.c.inputs[i]; return null; }
   function wall(id) { for (var i = 0; i < WALLS.length; i++) if (WALLS[i].id === id) return WALLS[i]; return null; }
   function wallIndex(id) { for (var i = 0; i < WALLS.length; i++) if (WALLS[i].id === id) return i; return 0; }
   function frostClass(w) { var i = [.12, .20, .30, .36, .44].indexOf(w.frostVeil); return i > 0 ? ' fv-' + (i + 1) : ''; }
@@ -315,6 +332,36 @@
   /* ---------- Saved preferences ---------- */
   function safeId(id) { return typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,160}$/.test(id) && ['constructor', 'prototype', '__proto__'].indexOf(id) < 0; }
   function safeIcon(path) { return typeof path === 'string' && path.length < 2048 && /^(?:\/[^\/]|file:\/\/\/|wgt-package:\/\/\/)/.test(path) ? path : ''; }
+  /* HDMI shortcuts are saved with the Home preferences. A shortcut stores the TV's port
+     number only: the public source API has no device identity, so a moved cable is not detected. */
+  function inputId(id) { return typeof id === 'string' && /^hdmi-[a-z0-9]{4,24}$/.test(id); }
+  function validPort(n) { return typeof n === 'number' && isFinite(n) && n >= 0 && n < 100 && Math.floor(n) === n; }
+  function cleanName(v) { return String(v === null || v === undefined ? '' : v).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').slice(0, INPUT_NAME_MAX); }
+  function cleanInputs(list) {
+    var out = [], seen = {};
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+      var name = x && cleanName(x.name);
+      if (!x || !inputId(x.id) || seen[x.id] || !validPort(x.port) || !name || out.length >= INPUT_CAP) return;
+      seen[x.id] = true;
+      out.push({ id: x.id, port: x.port, name: name, image: inputImage(x.image) ? x.image : 'input-hdmi' });
+    });
+    return out;
+  }
+  /* Shortcuts join APPS so Home, the editor and launch treat them like apps. */
+  function syncInputApps(list) {
+    APPS = APPS.filter(function (a) { return a.kind !== 'hdmi' || list.some(function (x) { return x.id === a.id; }); });
+    list.forEach(function (x) {
+      var a = app(x.id);
+      if (!a) { a = { id: x.id, kind: 'hdmi', appId: '', mark: true, icon: '' }; APPS.push(a); }
+      a.port = x.port; a.name = x.name; a.brand = x.image;
+    });
+  }
+  function newInputId() {
+    var id;
+    do id = 'hdmi-' + (Date.now().toString(36) + Math.floor(Math.random() * 1679616).toString(36)).slice(-12);
+    while (app(id) || shortcut(id));
+    return id;
+  }
   function load() {
     var keys = [KEY, 'cleanframe.shore.v1'], raw, saved, i;
     for (i = 0; i < keys.length; i++) {
@@ -329,7 +376,8 @@
   }
   function clean(saved) {
     var s = saved && typeof saved === 'object' ? saved : {}, modern = s.look && typeof s.look === 'object' ? s.look : s;
-    var legacyList = s.theme === 'list', h = [], recent = [], records = Array.isArray(s.appRecords) ? s.appRecords : [];
+    var legacyList = s.theme === 'list', h = [], recent = [], records = Array.isArray(s.appRecords) ? s.appRecords : [], inputs = cleanInputs(s.inputs);
+    syncInputApps(inputs);
     records.slice(0, 256).forEach(function (a) {
       if (!a || !safeId(a.id) || !safeId(a.appId) || typeof a.name !== 'string' || !a.name.trim() || app(a.id)) return;
       APPS.push({ id: a.id, appId: a.appId, name: a.name.slice(0, 160), brand: ['hbomax', 'spotify', 'tubi'].indexOf(a.brand) >= 0 ? a.brand : '', mark: ['hbomax', 'spotify', 'tubi'].indexOf(a.brand) >= 0, icon: safeIcon(a.icon) });
@@ -347,7 +395,7 @@
       focus: pick(modern.focus, LOOK_VALUES.focus, legacyList ? 'type' : 'glass'), material: pick(modern.material, LOOK_VALUES.material, 'soft'),
       font: pick(modern.font, LOOK_VALUES.font, 'manrope'), wall: wall(modern.wall || s.wallpaper) ? modern.wall || s.wallpaper : WALLS[0].id,
       home: h, recent: recent, lastApp: h.indexOf(s.lastApp) >= 0 ? s.lastApp : h[0],
-      mode: pick(s.mode, MODES.map(function (m) { return m.id; }), 'fixed')
+      mode: pick(s.mode, MODES.map(function (m) { return m.id; }), 'fixed'), inputs: inputs
     };
   }
   function serialise(c) {
@@ -358,7 +406,7 @@
     out.appRecords = [];
     c.home.concat(c.recent).forEach(function (key) {
       var a = app(key);
-      if (a && PRIMARY.indexOf(key) < 0 && !out.appRecords.some(function (r) { return r.id === key; })) out.appRecords.push({ id: a.id, appId: a.appId, name: a.name, brand: a.brand || '', icon: a.icon || '' });
+      if (a && a.kind !== 'hdmi' && PRIMARY.indexOf(key) < 0 && !out.appRecords.some(function (r) { return r.id === key; })) out.appRecords.push({ id: a.id, appId: a.appId, name: a.name, brand: a.brand || '', icon: a.icon || '' });
     });
     return out;
   }
@@ -372,7 +420,8 @@
   }
   function clearSession() { S.undo = []; S.removedAt = {}; S.note = null; S.err = null; }
   function begin() { S.note = null; }
-  function next(home, recent) { var c = lookOf(S.c); c.home = home; c.recent = recent; c.lastApp = S.c.lastApp; c.mode = S.c.mode; return c; }
+  // Every saved state is built here, so shortcuts survive appearance, wallpaper and Home edits.
+  function next(home, recent) { var c = lookOf(S.c); c.home = home; c.recent = recent; c.lastApp = S.c.lastApp; c.mode = S.c.mode; c.inputs = S.c.inputs; return c; }
   function snap() { return { home: S.c.home.slice(), recent: S.c.recent.slice() }; }
   function pushRecent(list, id) { return [id].concat(without(list, id)).slice(0, 5); }
   function write(c, label) {
@@ -462,6 +511,13 @@
     if (!a || busy) return;
     if (S.c.home.indexOf(id) >= 0) { c = next(S.c.home.slice(), S.c.recent.slice()); c.lastApp = id; write(c, 'Last app'); }
     S.press = id; S.lastLaunch = a.name;
+    if (a.kind === 'hdmi') {
+      // Same bounded, cancellable route as Settings → Samsung → Inputs.
+      perform(a.name, function (done) {
+        FrameDevice.setSource(a.port, function (err) { done(!document.hidden && !(err && err.cancelled) ? err : null); });
+      });
+      return;
+    }
     perform(a.name, function (done) { FrameDevice.launchApp(a.appId, done); });
   }
   function refreshCatalog() {
@@ -714,7 +770,11 @@
   /* ---------- B: two-zone Home editor ---------- */
   function otherGroups() {
     var rec = S.c.recent.filter(function (id) { return !onHome(id) && app(id); });
-    return { recent: rec, rest: ALPHA.filter(function (id) { return !onHome(id) && rec.indexOf(id) < 0; }) };
+    var rest = ALPHA.filter(function (id) { return !onHome(id) && rec.indexOf(id) < 0; });
+    var inputs = S.c.inputs.filter(function (x) { return !onHome(x.id) && rec.indexOf(x.id) < 0; });
+    // Off-Home shortcuts stay available like installed apps, in the same alphabetical list.
+    if (inputs.length) rest = rest.concat(inputs.map(function (x) { return x.id; })).sort(function (a, b) { return app(a).name.toLowerCase().localeCompare(app(b).name.toLowerCase()); });
+    return { recent: rec, rest: rest };
   }
   function otherList() { var o = otherGroups(); return o.recent.concat(o.rest); }
   function editorCut() { return 5; }
@@ -824,6 +884,7 @@
       { id: 'typography', label: 'Typography', value: FONTS[S.c.font].name },
       { id: 'focus', label: 'Focus', value: VALUE_NAMES[S.c.focus] + (materialApplies() ? ', ' + VALUE_NAMES[S.c.material] : '') },
       { id: 'editor', label: 'Apps on Home', value: n + (n === 1 ? ' app' : ' apps') },
+      { id: 'hdmi', label: 'HDMI shortcuts', value: S.c.inputs.length ? S.c.inputs.length + (S.c.inputs.length === 1 ? ' shortcut' : ' shortcuts') : 'None' },
       { id: 'samsung', label: 'Samsung', value: 'Home and TV settings' }];
   }
   function settingsIds() { return settingsRows().map(function (r) { return r.id; }); }
@@ -844,7 +905,146 @@
     if (id === 'editor') openEditor('settings');
     else openAppearance(id);
   }
-  var DETAIL_NAMES = { background: 'Background', layout: 'Layout', typography: 'Typography', focus: 'Focus', rotation: 'Rotation', samsung: 'Samsung', inputs: 'Inputs' };
+  var DETAIL_NAMES = { background: 'Background', layout: 'Layout', typography: 'Typography', focus: 'Focus', rotation: 'Rotation', samsung: 'Samsung', inputs: 'Inputs', hdmi: 'HDMI shortcuts', 'hdmi-edit': 'Shortcut' };
+  function detailParent(t) { return t.group === 'rotation' ? 'Background' : t.group === 'inputs' ? 'Samsung' : t.group === 'hdmi-edit' ? 'HDMI shortcuts' : 'Settings'; }
+  function detailTitle(t) { return t.group === 'hdmi-edit' ? (t.draft.id ? 'Edit shortcut' : 'Add shortcut') : DETAIL_NAMES[t.group]; }
+
+  /* ---------- HDMI shortcuts ---------- */
+  function hdmiSections() {
+    var list = S.c.inputs, full = list.length >= INPUT_CAP;
+    var sections = [{ id: 'hdmi-add', title: '', items: [{ action: 'hdmi.add', label: 'Add shortcut', description: full ? 'Delete a shortcut first' : 'Choose an input, name and image', disabled: full }],
+      reason: list.length ? '' : 'Shortcuts open an HDMI input from Home, like an app.' }];
+    if (list.length) sections.push({ id: 'hdmi-list', title: 'Shortcuts', items: list.map(function (x) {
+      return { action: 'hdmi.edit.' + x.id, label: x.name, description: 'HDMI ' + x.port + (onHome(x.id) ? ' · On Home' : ' · Not on Home'), mark: x.image };
+    }), reason: 'Arrange shortcuts, or show them on Home, in Apps on Home.' });
+    return sections;
+  }
+  function hdmiPorts(t) {
+    var ports = [];
+    (t.inputs || []).forEach(function (input) { if (ports.indexOf(input.number) < 0) ports.push(input.number); });
+    if (validPort(t.draft.port) && ports.indexOf(t.draft.port) < 0) ports.push(t.draft.port);
+    return ports.sort(function (a, b) { return a - b; });
+  }
+  function hdmiCanSave(t) { var d = t.draft; return validPort(d.port) && !!cleanName(d.name) && !!inputImage(d.image) && !t.typing; }
+  function hdmiEditSections(t) {
+    var d = t.draft, ports = hdmiPorts(t), reported = (t.inputs || []).some(function (x) { return x.number === d.port; }), portReason = '', saveReason = '', images, rows = [];
+    if (t.inputError) portReason = t.inputError;
+    else if (!t.loading && !ports.length) portReason = 'No HDMI inputs were reported by this TV.';
+    else if (!t.loading && validPort(d.port) && !reported) portReason = 'HDMI ' + d.port + ' is not reported by the TV right now. Check the cable before saving.';
+    if (!validPort(d.port)) saveReason = 'Choose an input to save this shortcut.';
+    else if (!cleanName(d.name)) saveReason = 'Enter a name to save this shortcut.';
+    if (t.saveError) saveReason = 'Couldn’t save this shortcut. Nothing changed.';
+    images = INPUT_IMAGES.map(function (img) { return { action: 'hdmi.image.' + img.id, label: img.label, mark: img.id, iconOnly: true, checked: d.image === img.id }; });
+    for (var i = 0; i < images.length; i += INPUT_IMAGE_COLS) rows.push({ id: 'hdmi-image', title: i ? '' : 'Image', horizontal: true, items: images.slice(i, i + INPUT_IMAGE_COLS) });
+    return [
+      { id: 'hdmi-port', title: 'Input', horizontal: true, reason: portReason, items: ports.length ? ports.map(function (n) { return { action: 'hdmi.port.' + n, label: 'HDMI ' + n, checked: d.port === n }; })
+        : [{ action: 'hdmi.ports.retry', label: t.loading ? 'Loading inputs…' : 'Try again', disabled: t.loading }] },
+      { id: 'hdmi-name', title: 'Name', items: [{ action: 'hdmi.name', label: d.name || 'Enter a name', textEntry: true, empty: !d.name }] }
+    ].concat(rows, [{ id: 'hdmi-actions', title: '', horizontal: true, reason: saveReason, items: [{ action: 'hdmi.save', label: d.id ? 'Save' : 'Add', disabled: !hdmiCanSave(t), plain: true }]
+      .concat(d.id ? [{ action: 'hdmi.delete', label: 'Delete', plain: true }] : []) }]);
+  }
+  function suggestName(d) {
+    if (d.nameTouched) return;
+    d.name = inputImage(d.image).name || (validPort(d.port) ? 'HDMI ' + d.port : '');
+  }
+  function defaultPort(t) {
+    var d = t.draft, used = S.c.inputs.map(function (x) { return x.port; }), list = t.inputs || [], pick = null;
+    if (validPort(d.port)) return;
+    list.some(function (x) { if (x.connected && used.indexOf(x.number) < 0) { pick = x.number; return true; } return false; });
+    if (pick === null) list.some(function (x) { if (used.indexOf(x.number) < 0) { pick = x.number; return true; } return false; });
+    if (pick === null && list.length) pick = list[0].number;
+    if (pick !== null) { d.port = pick; suggestName(d); }
+  }
+  function openShortcut(id) {
+    var x = id ? shortcut(id) : null;
+    delete S.detailFocus['hdmi-edit'];
+    openAppearance('hdmi-edit');
+    var t = top();
+    t.draft = x ? { id: x.id, port: x.port, name: x.name, image: x.image, nameTouched: true } : { id: null, port: null, name: '', image: 'input-hdmi', nameTouched: false };
+    t.f.action = 'hdmi.name'; t.inputs = []; t.saveError = false; t.typing = false; t.nameError = '';
+    loadInputs(t);
+  }
+  function saveShortcut(t) {
+    var d = t.draft, entry, list, h = S.c.home.slice(), c, id, added = !d.id, onHomeNow = true, lt;
+    if (!hdmiCanSave(t)) return;
+    id = d.id || newInputId();
+    entry = { id: id, port: d.port, name: cleanName(d.name), image: d.image };
+    list = added ? S.c.inputs.concat([entry]) : S.c.inputs.map(function (x) { return x.id === id ? entry : x; });
+    if (added) { if (h.length < CAP) h.push(id); else onHomeNow = false; }
+    c = next(h, S.c.recent.slice()); c.inputs = list;
+    if (!write(c, (added ? 'Add ' : 'Edit ') + entry.name)) { t.saveError = true; return; }
+    t.saveError = false; S.err = null;
+    syncInputApps(list);
+    pop(); lt = top();
+    if (lt.group === 'hdmi') {
+      detailFocus(lt, { action: 'hdmi.edit.' + id }, 0);
+      lt.notice = added ? (onHomeNow ? entry.name + ' is on Home, position ' + (h.indexOf(id) + 1) + '.' : 'Home holds nine apps. ' + entry.name + ' is saved under Not on Home in Apps on Home.') : entry.name + ' saved.';
+    }
+  }
+  function confirmDelete(t) {
+    var d = t.draft;
+    if (S.c.home.length === 1 && S.c.home[0] === d.id) { message('Delete shortcut', LAST + '. Add another app to Home first.'); return; }
+    push({ id: 'message', msg: 'hdmi-delete', payload: d.id, f: { b: 0 }, content: { title: 'Delete shortcut?', line: d.name, note: 'The HDMI input and its device are not changed.', actions: [['cancel', 'Cancel'], ['hdmi-delete', 'Delete']] } });
+  }
+  function deleteShortcut(id) {
+    var x = shortcut(id), t = top(), list, h, c;
+    if (!x || t.group !== 'hdmi-edit' || t.draft.id !== id) return;
+    list = S.c.inputs.filter(function (s) { return s.id !== id; }); h = without(S.c.home, id);
+    if (!h.length) return;
+    c = next(h, without(S.c.recent, id)); c.inputs = list;
+    if (c.lastApp === id) c.lastApp = h[0];
+    if (!write(c, 'Delete ' + x.name)) { t.saveError = true; return; }
+    syncInputApps(list); t.saveError = false; S.err = null;
+    pop(); if (top().group === 'hdmi') top().notice = x.name + ' deleted.';
+  }
+
+  /* Samsung's on-screen keyboard opens when a text field takes focus. While typing, the
+     launcher's key map is suspended so Backspace and the arrows edit the text. Done (65376)
+     or Enter keeps the name; Cancel (65385), Escape or Back restores it. */
+  var nameField = document.createElement('input');
+  nameField.type = 'text'; nameField.className = 'hdmi-name-field'; nameField.hidden = true;
+  nameField.setAttribute('maxlength', String(INPUT_NAME_MAX)); nameField.setAttribute('autocomplete', 'off');
+  nameField.setAttribute('autocapitalize', 'words'); nameField.setAttribute('spellcheck', 'false');
+  nameField.setAttribute('aria-label', 'Shortcut name');
+  function startTyping(t) {
+    t.typing = true; t.nameError = '';
+    nameField.value = t.draft.name; nameField.hidden = false;
+    render();
+    try { nameField.focus({ preventScroll: true }); } catch (e) { nameField.focus(); }
+    try { nameField.setSelectionRange(nameField.value.length, nameField.value.length); } catch (e) { /* Some engines reject selection on a hidden-then-shown field. */ }
+  }
+  function typingView() { var t = top(); return t && t.typing ? t : null; }
+  function endTyping(t) {
+    t.typing = false; nameField.hidden = true;
+    if (document.activeElement === nameField) nameField.blur();
+    focusStage(); after();
+  }
+  function commitTyping() {
+    var t = typingView(), value;
+    if (!t) return;
+    value = cleanName(nameField.value);
+    if (value) { t.draft.name = value; t.draft.nameTouched = true; t.nameError = ''; }
+    else t.nameError = 'A shortcut needs a name. The previous name is kept.';
+    endTyping(t);
+  }
+  function cancelTyping() { var t = typingView(); if (t) endTyping(t); }
+  function typingKey(ev) {
+    var code = ev.keyCode;
+    if (code === 13 && (ev.repeat || heldKeys[13])) { ev.preventDefault(); return; }
+    if (code === 13 || code === IME_DONE) { ev.preventDefault(); commitTyping(); }
+    else if (code === IME_CANCEL || code === 27 || code === 10009 || code === 461) { ev.preventDefault(); cancelTyping(); }
+    // Every other key, including Backspace (8) and the arrows, stays with the text field.
+  }
+  nameField.addEventListener('blur', function () { if (typingView() && !document.hidden) commitTyping(); });
+  function placeNameField() {
+    var t = typingView(), button, r, ar, scale;
+    if (!t) { nameField.hidden = true; return; }
+    button = appearanceRows.querySelector('[data-action="hdmi.name"]');
+    if (!button) { cancelTyping(); return; }
+    r = button.getBoundingClientRect(); ar = appearanceEl.getBoundingClientRect(); scale = stage.getBoundingClientRect().width / 1920 || 1;
+    nameField.style.left = ((r.left - ar.left) / scale) + 'px'; nameField.style.top = ((r.top - ar.top) / scale) + 'px';
+    nameField.style.width = (r.width / scale) + 'px'; nameField.style.height = (r.height / scale) + 'px';
+  }
   function choice(axis, value, disabled) {
     return { action: axis === 'mode' ? 'rotation.' + value : 'choice.' + axis + '.' + value, axis: axis, value: value, disabled: !!disabled,
       label: axis === 'font' ? FONTS[value].name : axis === 'mode' ? MODES.filter(function (m) { return m.id === value; })[0].name : value === 'both' ? 'Both' : VALUE_NAMES[value] };
@@ -852,6 +1052,8 @@
   function detailSections(t) {
     var flat = S.c.bg !== 'photo', inactive = !materialApplies();
     function options(axis, values, disabled) { return values.map(function (value) { return choice(axis, value, disabled); }); }
+    if (t.group === 'hdmi') return hdmiSections();
+    if (t.group === 'hdmi-edit') return hdmiEditSections(t);
     if (t.group === 'inputs') return [{ id: 'inputs', title: '', items: t.inputs.length ? t.inputs.map(function (input) {
       return { action: 'input.' + input.number, label: input.name, description: input.active ? 'Active' : input.connected ? 'Connected' : 'Disconnected — may be asleep' };
     }) : [{ action: 'inputs.retry', label: t.loading ? 'Loading inputs…' : 'Try again', disabled: t.loading }],
@@ -881,7 +1083,7 @@
     ] }];
   }
   function detailRows(t) {
-    var rows = [[{ action: 'settings.back', label: t.group === 'rotation' ? 'Background' : t.group === 'inputs' ? 'Samsung' : 'Settings' }]];
+    var rows = [[{ action: 'settings.back', label: detailParent(t) }]];
     detailSections(t).forEach(function (section) {
       var enabled = section.items.filter(function (item) { return !item.disabled; });
       if (section.horizontal && enabled.length) rows.push(enabled);
@@ -913,7 +1115,13 @@
     t.loading = true; t.inputError = null;
     FrameDevice.sources(function (err, list) {
       if (top() !== t) return;
-      t.loading = false; t.inputs = list || []; t.inputError = err ? err.message : null; after();
+      t.loading = false; t.inputs = list || []; t.inputError = err ? err.message : null;
+      if (t.group === 'hdmi-edit') {
+        defaultPort(t);
+        // A new shortcut starts on its input once the TV has reported the ports.
+        if (!t.draft.id && !t.portFocused && validPort(t.draft.port) && t.f.action === 'hdmi.name') { t.f.action = 'hdmi.port.' + t.draft.port; t.portFocused = true; }
+      }
+      after();
     });
   }
   function openInputs() {
@@ -935,6 +1143,14 @@
     else if (item.action === 'samsung.home') perform('Samsung Home', FrameDevice.home);
     else if (item.action === 'samsung.settings') perform('TV settings', FrameDevice.settings);
     else if (item.action === 'samsung.inputs') openInputs();
+    else if (item.action === 'hdmi.add') openShortcut(null);
+    else if (item.action.indexOf('hdmi.edit.') === 0) openShortcut(item.action.slice(10));
+    else if (item.action === 'hdmi.ports.retry') loadInputs(t);
+    else if (item.action.indexOf('hdmi.port.') === 0) { t.draft.port = Number(item.action.slice(10)); t.saveError = false; suggestName(t.draft); }
+    else if (item.action.indexOf('hdmi.image.') === 0) { t.draft.image = item.action.slice(11); t.saveError = false; suggestName(t.draft); }
+    else if (item.action === 'hdmi.name') startTyping(t);
+    else if (item.action === 'hdmi.save') saveShortcut(t);
+    else if (item.action === 'hdmi.delete') confirmDelete(t);
     else if (item.action === 'inputs.retry') loadInputs(t);
     else if (item.action.indexOf('input.') === 0) perform(item.label, function (done) {
       FrameDevice.setSource(Number(item.action.slice(6)), function (err) {
@@ -983,7 +1199,7 @@
       if (k === 'left') t.f.b = Math.max(0, t.f.b - 1);
       else if (k === 'right') t.f.b = Math.min(A.length - 1, t.f.b + 1);
       else if (k === 'back') pop();
-      else if (k === 'ok') { a = A[t.f.b][0]; pop(); if (a === 'samsung') perform('Samsung Home', FrameDevice.home); }
+      else if (k === 'ok') { a = A[t.f.b][0]; pop(); if (a === 'samsung') perform('Samsung Home', FrameDevice.home); else if (a === 'hdmi-delete') deleteShortcut(t.payload); }
     },
     point: function (t, z, i) { if (z === 'act') { t.f.b = i; this.key(t, 'ok'); } }
   };
@@ -991,6 +1207,7 @@
   /* ---------- Dispatch ---------- */
   function norm() { var t = top(), v = V[t.id]; if (v.norm) v.norm(t); }
   function press(k) {
+    if (typingView()) { if (k === 'ok') commitTyping(); else if (k === 'back') cancelTyping(); return; }
     norm();
     var t = top();
     V[t.id].key(t, k);
@@ -1411,30 +1628,31 @@
     V.appearance.norm(t);
     appearanceEl.className = 'appearance detail-' + t.group;
     appearanceRows.className = 'appearance-rows';
-    appearanceTitle.textContent = DETAIL_NAMES[t.group];
-    var at = detailLocation(t), selected = at.item, error = S.lookError, status = '', hint;
+    appearanceTitle.textContent = detailTitle(t);
+    var at = detailLocation(t), selected = at.item, error = S.lookError, status = '', hint, focused;
     function command(item, inner, cls) {
-      var applied = item.axis && S.c[item.axis] === item.value;
+      var applied = item.axis ? S.c[item.axis] === item.value : !!item.checked;
       var loading = !!(item.axis && S.pending && S.pending.target[item.axis] === item.value && S.pending.row === item.axis);
       return '<button type="button" tabindex="-1" class="setting-choice' + (cls ? ' ' + cls : '') + (t.f.action === item.action ? ' is-focus' : '') + (item.disabled ? ' is-disabled' : '') + (applied ? ' is-applied' : '') + (loading ? ' is-loading' : '') + '"'
-        + (item.axis ? ' role="radio" aria-checked="' + !!applied + '"' : '') + ' aria-label="' + esc(item.axis && item.value === 'both' ? 'Icons and text' : item.label) + '" aria-disabled="' + !!item.disabled + '" aria-busy="' + loading + '"'
-        + ' data-z="detail" data-i="0" data-id="' + item.action + '" data-action="' + item.action + '">' + inner
+        + (item.axis || item.checked !== undefined ? ' role="radio" aria-checked="' + !!applied + '"' : '') + ' aria-label="' + esc(item.axis && item.value === 'both' ? 'Icons and text' : item.label) + '" aria-disabled="' + !!item.disabled + '" aria-busy="' + loading + '"'
+        + ' data-z="detail" data-i="0" data-id="' + esc(item.action) + '" data-action="' + esc(item.action) + '">' + inner
         + (item.axis ? '<span class="setting-tick" aria-hidden="true">' + (applied ? icon('check') : '') + '</span>' : '') + '</button>';
     }
-    setHTML(appearanceBack, command({ action: 'settings.back', label: t.group === 'rotation' ? 'Background' : t.group === 'inputs' ? 'Samsung' : 'Settings' }, icon('left') + '<span>' + (t.group === 'rotation' ? 'Background' : t.group === 'inputs' ? 'Samsung' : 'Settings') + '</span>', 'setting-back'));
+    setHTML(appearanceBack, command({ action: 'settings.back', label: detailParent(t) }, icon('left') + '<span>' + detailParent(t) + '</span>', 'setting-back'));
     setHTML(appearanceRows, detailSections(t).map(function (section) {
       return '<section class="setting-section' + (section.horizontal ? ' is-horizontal' : '') + ' section-' + section.id + '">'
         + (section.title ? '<h3 class="setting-label" id="setting-' + section.id + '">' + section.title + '</h3>' : '')
-        + '<div class="setting-options"' + (section.items[0].axis ? ' role="radiogroup" aria-label="' + esc(section.title || LOOK_NAMES[section.id] || DETAIL_NAMES[t.group]) + '"' : '') + '>'
+        + '<div class="setting-options"' + (section.items[0].axis || section.items[0].checked !== undefined ? ' role="radiogroup" aria-label="' + esc(section.title || LOOK_NAMES[section.id] || DETAIL_NAMES[t.group]) + '"' : '') + '>'
         + section.items.map(function (item) {
           var swatch = item.axis === 'bg', body = '';
           if (swatch || item.thumbnail) body += item.value === 'light' || item.value === 'dark'
             ? '<span class="setting-swatch swatch-' + item.value + '" aria-hidden="true"></span>'
             : '<img class="setting-swatch" src="' + WP + S.c.wall + '-thumb.jpg" alt="">';
-          body += '<span class="setting-copy"><span class="setting-name">' + esc(item.label) + '</span>'
+          if (item.mark) body += '<span class="setting-mark" aria-hidden="true">' + markHtml(item.mark, item.iconOnly ? 64 : 56, item.iconOnly ? 52 : 44, item.iconOnly ? 46 : 38) + '</span>';
+          if (!item.iconOnly) body += '<span class="setting-copy"><span class="setting-name">' + esc(item.label) + '</span>'
             + (item.description ? '<span class="setting-description">' + esc(item.description) + '</span>' : '') + '</span>';
-          if (!item.axis) body += icon('right', 'setting-forward');
-          return command(item, body, item.description ? 'has-description' : '');
+          if (!item.axis && item.checked === undefined && !item.plain) body += icon(item.textEntry ? 'edit' : 'right', 'setting-forward');
+          return command(item, body, (item.description ? 'has-description' : '') + (item.iconOnly ? ' setting-image' : '') + (item.textEntry ? ' setting-text' + (item.empty ? ' is-empty' : '') + (t.typing ? ' is-typing' : '') : ''));
         }).join('') + '</div>'
         + (section.reason ? '<p class="setting-reason">' + esc(section.reason) + '</p>' : '') + '</section>';
     }).join(''));
@@ -1443,9 +1661,38 @@
       status = '<p class="setting-error">' + (error.type === 'save' ? 'Couldn’t save this change.' : error.type === 'font' ? 'Couldn’t load ' + esc(FONTS[error.font].name) + '.' : 'Couldn’t load this appearance.') + ' Your current choice is kept.</p>'
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
     }
+    if (t.group === 'hdmi' && t.notice) status = '<p>' + esc(t.notice) + '</p>';
+    if (t.group === 'hdmi-edit') status = hdmiPreview(t);
     setHTML(appearanceStatus, status);
-    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + (t.group === 'rotation' ? 'Background' : t.group === 'inputs' ? 'Samsung' : 'Settings') : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.rotation' ? 'Choose a rotation interval' : 'Open on the TV';
-    setHTML(appearanceDesc, hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
+    hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Return to ' + detailParent(t) : selected.action === 'settings.retry' ? 'Retry this change' : selected.axis ? 'Apply selected setting' : selected.action === 'background.wallpaper' ? 'Choose a wallpaper' : selected.action === 'background.rotation' ? 'Choose a rotation interval'
+      : t.group === 'hdmi' || t.group === 'hdmi-edit' ? hdmiHint(t, selected) : 'Open on the TV';
+    setHTML(appearanceDesc, t.typing ? '<span class="remote-key">Done</span><span>Keep this name · Back cancels</span>' : hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
+    // Long shortcut lists scroll within the settings column; focus always stays visible.
+    focused = appearanceRows.querySelector('.is-focus');
+    if (t.group === 'hdmi' || t.group === 'hdmi-edit') {
+      if (focused && focused.offsetTop + focused.offsetHeight > appearanceRows.scrollTop + appearanceRows.clientHeight) appearanceRows.scrollTop = focused.offsetTop + focused.offsetHeight - appearanceRows.clientHeight;
+      else if (focused && focused.offsetTop < appearanceRows.scrollTop) appearanceRows.scrollTop = Math.max(0, focused.offsetTop - 48);
+    } else appearanceRows.scrollTop = 0;
+    placeNameField();
+  }
+  function hdmiHint(t, item) {
+    var a = item.action, img;
+    if (a === 'hdmi.add') return 'Create a shortcut';
+    if (a.indexOf('hdmi.edit.') === 0) return 'Edit this shortcut';
+    if (a === 'hdmi.ports.retry') return 'Look for HDMI inputs again';
+    if (a.indexOf('hdmi.port.') === 0) return 'Use ' + item.label;
+    if (a === 'hdmi.name') return 'Type a name with the TV keyboard';
+    if (a.indexOf('hdmi.image.') === 0) { img = inputImage(a.slice(11)); return 'Use the ' + img.label + ' image'; }
+    if (a === 'hdmi.save') return t.saveError ? 'Try saving again' : t.draft.id ? 'Save changes' : 'Add this shortcut';
+    if (a === 'hdmi.delete') return 'Delete this shortcut';
+    return '';
+  }
+  /* The draft is shown as its Home tile; Home itself changes only after saving. */
+  function hdmiPreview(t) {
+    var d = t.draft, img = inputImage(d.image);
+    return '<div class="hdmi-preview" aria-hidden="true">' + markHtml(d.image, 120, 72, 58) + '<span class="hdmi-preview-name">' + esc(cleanName(d.name) || 'Unnamed') + '</span>'
+      + '<span class="hdmi-preview-meta">' + (validPort(d.port) ? 'HDMI ' + d.port : 'No input chosen') + ' · ' + esc(img.label) + '</span></div>'
+      + (t.nameError ? '<p class="setting-error">' + esc(t.nameError) + '</p>' : '');
   }
   function renderWallpaper(t) {
     V.wallpaper.norm(t);
@@ -1859,6 +2106,7 @@
   });
   stage.addEventListener('click', function (ev) {
     var el = ev.target;
+    if (el === nameField) return;
     while (el && el !== stage && !(el.getAttribute && el.getAttribute('data-z'))) el = el.parentNode;
     focusStage();
     if (!el || el === stage) return;
@@ -1867,6 +2115,7 @@
   var heldKeys = {};
   document.addEventListener('keydown', function (ev) {
     var code = ev.keyCode, k = KEYS[code];
+    if (typingView()) { typingKey(ev); return; }
     if (code === 9) { ev.preventDefault(); return; }
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
@@ -1875,10 +2124,11 @@
   });
   document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; });
   window.addEventListener('blur', function () { heldKeys = {}; });
-  window.addEventListener('focus', function () { FrameDevice.cancelSource(); release(); refreshInputsOnReturn(); focusStage(); after(); updateClock(); });
+  // The on-screen keyboard can move window focus; an open name field keeps its own focus.
+  window.addEventListener('focus', function () { FrameDevice.cancelSource(); release(); refreshInputsOnReturn(); if (!typingView()) focusStage(); after(); updateClock(); });
   document.addEventListener('visibilitychange', function () {
     heldKeys = {};
-    if (document.hidden) { FrameDevice.cancelSource(); pauseRotation(); clearTimeout(clockTimer); }
+    if (document.hidden) { cancelTyping(); FrameDevice.cancelSource(); pauseRotation(); clearTimeout(clockTimer); }
     else {
       release();
       if (S.c.bg === 'photo' && !S.pending && !S.previewBundle && (!committedBundle || S.bundleKey !== bundleKey(S.c))) setLook({}, { transient: true, startup: true });
@@ -1903,6 +2153,7 @@
     out.wallpaperPicker = t.id === 'wallpaper' ? { candidate: WALLS[t.i].id, applied: S.c.wall, shown: S.wallShown, pending: t.previewDue || S.wallPending,
       queuedApplying: !!t.applyPending, applyPending: t.applyPending, failed: t.failedId, zone: t.f.zone, top: t.top, visible: WALL_VISIBLE, backdrop: IMG.bg.src } : null;
     out.undo = S.undo.map(function (u) { return u.label; }); out.storageOk = storageOk;
+    out.shortcutDraft = t.group === 'hdmi-edit' ? { id: t.draft.id, port: t.draft.port, name: t.draft.name, image: t.draft.image, typing: !!t.typing, nameError: t.nameError || '', saveError: !!t.saveError } : null;
     return JSON.parse(JSON.stringify(out));
   };
   QA.where = function () {
@@ -1919,6 +2170,7 @@
 
   /* ---------- Start ---------- */
   cueL.innerHTML = icon('left'); cueR.innerHTML = icon('right');
+  appearanceEl.appendChild(nameField);
   initialise();
   setLook({}, { transient: true, startup: true });
   norm(); render(); fit(); focusStage(); updateClock(); syncRotation();

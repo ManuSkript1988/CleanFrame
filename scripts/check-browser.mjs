@@ -417,7 +417,12 @@ try {
         const scale = document.getElementById('stage').getBoundingClientRect().width / 1920;
         return elements.map(e => (e.querySelector('.ico').getBoundingClientRect().left - e.querySelector('.settings-group-copy').getBoundingClientRect().right) / scale);
       });
-      check('Settings group arrows stay separate from their copy at ' + width, groups.length === 6 && groups.every(gap => gap >= 31.5), groups);
+      check('Settings group arrows stay separate from their copy at ' + width, groups.length === 7 && groups.every(gap => gap >= 31.5), groups);
+      const overviewEnd = await current.evaluate(() => {
+        const rows = [...document.querySelectorAll('.settings-group')], hint = document.querySelector('.settings-overview-hint');
+        return hint.getBoundingClientRect().top - rows.at(-1).getBoundingClientRect().bottom;
+      });
+      check('All Settings groups end above the OK hint at ' + width, overviewEnd >= 16, overviewEnd);
       await wallpaper();
       const caption = await current.locator('.wallpaper-preview-name').evaluate(e => {
         const scale = document.getElementById('stage').getBoundingClientRect().width / 1920;
@@ -500,6 +505,181 @@ try {
     await nav('back');
     await scene('home'); await act('home.app.netflix'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
     check('Launch failure is shown', /could not|unavailable|try again/i.test(await current.locator('#stage').innerText()));
+  });
+  const SHORTCUT = { id: 'hdmi-switch01', port: 3, name: 'Nintendo Switch 2', image: 'input-handheld' };
+  const draft = async () => (await state()).shortcutDraft;
+  const ime = code => current.evaluate(keyCode => {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'keyCode', { get: () => keyCode });
+    document.activeElement.dispatchEvent(event);
+  }, code);
+  const typingField = () => current.evaluate(() => document.activeElement && document.activeElement.className === 'hdmi-name-field' && !document.activeElement.hidden);
+  await run('HDMI shortcut creation and TV keyboard', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 4) }) });
+    await group('hdmi');
+    check('Settings lists HDMI shortcuts with no entries yet', (await call('actions')).includes('hdmi.add') && !(await call('actions')).some(a => a.startsWith('hdmi.edit.')));
+    await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.2"]');
+    let d = await draft();
+    check('New shortcut defaults to the first connected unused input', d.port === 2 && d.name === 'HDMI 2' && d.image === 'input-hdmi', d);
+    check('Discovered ports are offered without invented ports', same((await call('actions')).filter(a => a.startsWith('hdmi.port.')), ['hdmi.port.1', 'hdmi.port.2', 'hdmi.port.3']));
+    check('New shortcut focus starts on its input', (await call('where')).focusAction === 'hdmi.port.2');
+    const images = (await call('actions')).filter(a => a.startsWith('hdmi.image.')).map(a => a.slice(11));
+    check('Image choice includes the requested devices and a generic HDMI mark', ['playstation', 'input-handheld', 'input-controller', 'appletv', 'input-stick', 'input-disc', 'input-pc', 'input-receiver', 'input-hdmi'].every(id => images.includes(id)), images);
+    check('Every image choice has a bundled SVG and measured metrics', await current.evaluate(async ids => {
+      for (const id of ids) { const r = await fetch('assets/icons/' + id + '.svg'); if (!r.ok || !window.FrameIconMetrics[id]) return false; }
+      return true;
+    }, images));
+    await act('hdmi.image.playstation');
+    check('An image suggests its device name until a name is typed', (await draft()).name === 'PlayStation 5');
+    await act('hdmi.port.1');
+    check('Changing the input keeps an image name', (await draft()).port === 1 && (await draft()).name === 'PlayStation 5');
+
+    await act('hdmi.name');
+    check('Name entry focuses a real text field for the TV keyboard', (await draft()).typing && await typingField());
+    await current.keyboard.press('Backspace');
+    check('Backspace edits text instead of leaving the panel', (await call('where')).settingsGroup === 'hdmi-edit' && (await draft()).typing && await current.evaluate(() => document.activeElement.value) === 'PlayStation ');
+    await current.keyboard.press('ArrowLeft'); await current.keyboard.press('ArrowRight');
+    check('Arrow keys stay inside the text field', (await draft()).typing);
+    await current.keyboard.type('5 Pro'); await current.keyboard.press('Enter');
+    d = await draft();
+    check('Enter keeps the typed name and closes the field', !d.typing && d.name === 'PlayStation 5 Pro' && !(await typingField()), d);
+    await act('hdmi.image.input-controller');
+    check('A typed name is not replaced by an image suggestion', (await draft()).name === 'PlayStation 5 Pro');
+
+    await act('hdmi.name'); await current.keyboard.type(' X'); await ime(65385);
+    check('Samsung keyboard Cancel restores the previous name', !(await draft()).typing && (await draft()).name === 'PlayStation 5 Pro');
+    await act('hdmi.name'); await current.keyboard.type(' Y'); await current.keyboard.press('Escape');
+    check('Escape restores the previous name', (await draft()).name === 'PlayStation 5 Pro');
+    await act('hdmi.name'); await current.keyboard.type(' Z'); await nav('back');
+    check('Remote Back while typing cancels only the text entry', (await call('where')).settingsGroup === 'hdmi-edit' && (await draft()).name === 'PlayStation 5 Pro');
+    await act('hdmi.name');
+    await current.evaluate(() => { document.activeElement.value = 'Living room <b>PS5</b>'; });
+    await ime(65376);
+    check('Samsung keyboard Done keeps the name as text', (await draft()).name === 'Living room <b>PS5</b>');
+    await act('hdmi.name'); await current.evaluate(() => { document.activeElement.value = '   '; }); await current.keyboard.press('Enter');
+    d = await draft();
+    check('An empty name is refused and the previous name kept', d.name === 'Living room <b>PS5</b>' && /needs a name/.test(d.nameError), d);
+    await act('hdmi.name'); await current.keyboard.type('x'.repeat(60));
+    check('The field limits names to forty characters', (await current.evaluate(() => document.activeElement.value)).length === 40);
+    await ime(65385);
+    await current.evaluate(() => { const f = document.querySelector('.hdmi-name-field'); f.dispatchEvent(new Event('blur')); });
+    check('Field blur after cancel changes nothing', (await draft()).name === 'Living room <b>PS5</b>');
+
+    await act('hdmi.image.input-pc'); await nav('up', 'up');
+    check('Remote navigation reaches the name row', (await call('where')).focusAction === 'hdmi.name');
+    await current.keyboard.down('Enter');
+    await current.keyboard.down('Enter');
+    check('A held OK opens the keyboard once and does not confirm it', (await draft()).typing);
+    await current.keyboard.up('Enter'); await current.keyboard.press('Escape');
+
+    await act('hdmi.save');
+    const saved = await state(), entry = saved.inputs[0];
+    check('Saving stores one shortcut with port, name and image', saved.inputs.length === 1 && entry.port === 1 && entry.name === 'Living room <b>PS5</b>' && entry.image === 'input-pc' && /^hdmi-[a-z0-9]+$/.test(entry.id), saved.inputs);
+    check('A saved shortcut joins the end of Home', saved.home.at(-1) === entry.id && saved.home.length === 5, saved.home);
+    check('Saving returns to the shortcut list with that shortcut focused', (await call('where')).settingsGroup === 'hdmi' && (await call('where')).focusAction === 'hdmi.edit.' + entry.id);
+    check('Shortcut names are never parsed as markup', !(await current.locator('#stage b').count()));
+    const persisted = await stored();
+    check('The shortcut is saved in the existing preferences key', persisted.inputs.length === 1 && persisted.inputs[0].id === entry.id && !persisted.appRecords.some(r => r.id === entry.id), persisted);
+  });
+  await run('HDMI shortcut tiles on Home', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT] }) });
+    for (const layout of ['dock', 'list']) for (const apps of ['both', 'icons', 'text']) {
+      await look({ layout, apps }); await scene('home');
+      const tile = await current.evaluate(id => {
+        const shown = [...document.querySelectorAll('#home [data-action="home.app.' + id + '"]')].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+        return shown.length === 1 ? { mark: !!shown[0].querySelector('[data-mark="input-handheld"]'), text: shown[0].innerText } : { count: shown.length };
+      }, SHORTCUT.id);
+      check(layout + '/' + apps + ' shows the shortcut like an app', tile.text !== undefined && (apps === 'text' || tile.mark) && (apps === 'icons' || tile.text.includes('Nintendo Switch 2')), tile);
+    }
+    await look({ layout: 'dock', apps: 'both' }); await scene('home');
+    await nav('right', 'right', 'right');
+    check('Remote navigation reaches the shortcut', (await state()).selected === SHORTCUT.id);
+    await nav('ok'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
+    const calls = await current.evaluate(() => __tv.calls);
+    check('OK selects the saved HDMI port, then opens the TV viewer', calls.some(c => c.method === 'setSource' && c.number === 3) && calls.findIndex(c => c.method === 'setSource') < calls.findIndex(c => c.id === 'org.tizen.tv-viewer'), calls);
+    check('Opening a shortcut records it as the last app', (await stored()).lastApp === SHORTCUT.id);
+    await current.evaluate(() => { window.dispatchEvent(new Event('focus')); __tv.videoSources = { connected: [{ type: 'HDMI', number: 1 }], disconnected: [] }; });
+    await scene('home'); await act('home.app.' + SHORTCUT.id); await current.waitForFunction(() => ShoreQA.where().view === 'message');
+    check('A port the TV no longer reports is an error, not a guess', /no longer available/i.test(await current.locator('#stage').innerText()) && !(await current.evaluate(() => __tv.calls.some(c => c.method === 'setSource' && c.number === 1))));
+    await nav('back');
+    await current.evaluate(() => { __tv.videoSources = { connected: [{ type: 'HDMI', number: 3 }], disconnected: [] }; __tv.sourceFailure = true; });
+    await scene('home'); await act('home.app.' + SHORTCUT.id); await current.waitForFunction(() => ShoreQA.where().view === 'message');
+    check('A routing failure is shown and the launcher stays usable', /could not|try again/i.test(await current.locator('#stage').innerText()));
+    await nav('back');
+    check('Back from the error returns to Home', (await call('where')).view === 'home');
+  });
+  await run('HDMI shortcuts persist with other preferences', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT, { id: 'bad id', port: 1, name: 'Bad' }, { id: 'hdmi-neg1', port: -1, name: 'Negative' },
+      { id: 'hdmi-blank1', port: 2, name: '   ' }, { id: 'hdmi-odd1', port: 1, name: 'Odd\u0007 image', image: '../../evil' }, { id: SHORTCUT.id, port: 2, name: 'Duplicate' }] }) });
+    let s = await state();
+    check('Invalid stored shortcuts are dropped and unknown images replaced', same(s.inputs.map(x => x.id), [SHORTCUT.id, 'hdmi-odd1']) && s.inputs[1].image === 'input-hdmi' && s.inputs[1].name === 'Odd image', s.inputs);
+    await look({ layout: 'list', bg: 'dark' });
+    s = await stored();
+    check('Appearance changes keep shortcuts and their Home place', s.inputs.length === 2 && s.home.includes(SHORTCUT.id), s);
+    await current.reload(); await ready();
+    s = await state();
+    check('Shortcuts survive a restart', s.inputs.length === 2 && s.home.includes(SHORTCUT.id) && s.layout === 'list');
+    await scene('editor');
+    check('Home editor lists shortcuts on Home and off Home', (await call('actions')).includes('editor.add.hdmi-odd1') && await current.locator('.er-text', { hasText: 'Nintendo Switch 2' }).count() === 1);
+    await act('editor.add.hdmi-odd1');
+    check('An off-Home shortcut can be added like an app', (await state()).home.includes('hdmi-odd1'));
+    await nav('back');
+    const legacy = await current.evaluate(() => { const v = JSON.parse(localStorage.getItem('cleanframe.home.v1')); delete v.inputs; return v; });
+    await closePage();
+    await page({ seed: legacy });
+    s = await state();
+    check('Preferences without shortcuts still load unchanged', same(s.inputs, []) && !s.home.some(id => id.startsWith('hdmi-')), s);
+  });
+  await run('HDMI shortcut editing and deletion', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT], lastApp: SHORTCUT.id }) });
+    await group('hdmi');
+    check('Shortcut row shows its port and Home state', (await current.locator('[data-action="hdmi.edit.' + SHORTCUT.id + '"]').innerText()).includes('HDMI 3 · On Home'));
+    await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.port.1"]');
+    check('Editing starts from the saved values', same(await draft(), { id: SHORTCUT.id, port: 3, name: 'Nintendo Switch 2', image: 'input-handheld', typing: false, nameError: '', saveError: false }));
+    await act('hdmi.image.playstation');
+    check('Choosing an image keeps an existing name', (await draft()).name === 'Nintendo Switch 2');
+    await act('hdmi.port.2');
+    await current.evaluate(() => { window.__failWrites = true; });
+    await act('hdmi.save');
+    check('A failed save stays in the editor and changes nothing', (await draft()).saveError && (await state()).inputs[0].port === 3);
+    await current.evaluate(() => { window.__failWrites = false; });
+    await act('hdmi.save');
+    check('Retrying saves the edit', (await state()).inputs[0].port === 2 && (await state()).inputs[0].image === 'playstation' && (await call('where')).settingsGroup === 'hdmi');
+    check('Edited shortcut keeps its Home position', (await state()).home.indexOf(SHORTCUT.id) === 3);
+    await act('hdmi.edit.' + SHORTCUT.id); await act('hdmi.delete');
+    check('Delete asks for confirmation', (await call('where')).view === 'message');
+    await act('message.cancel');
+    check('Cancel keeps the shortcut', (await state()).inputs.length === 1 && (await call('where')).settingsGroup === 'hdmi-edit');
+    await act('hdmi.delete'); await act('message.hdmi-delete');
+    const s = await state();
+    check('Delete removes the shortcut from settings, Home and recent apps', !s.inputs.length && !s.home.includes(SHORTCUT.id) && !s.recent.includes(SHORTCUT.id) && s.lastApp === s.home[0] && (await call('where')).settingsGroup === 'hdmi', s);
+    await scene('home');
+    check('Deleted shortcut leaves Home', !(await current.locator('[data-action="home.app.' + SHORTCUT.id + '"]').count()));
+  });
+  await run('HDMI shortcut limits and unavailable inputs', async () => {
+    await page({ seed: baseline({ dock: [SHORTCUT.id], inputs: [SHORTCUT] }) });
+    await group('hdmi'); await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.delete"]'); await act('hdmi.delete');
+    check('The only Home item cannot be deleted', (await call('where')).view === 'message' && /Home needs one app/.test(await current.locator('#stage').innerText()) && (await state()).inputs.length === 1);
+    await closePage();
+    await page();
+    await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.2"]'); await act('hdmi.save');
+    const full = await state();
+    check('With nine apps on Home a new shortcut is saved off Home', full.inputs.length === 1 && full.home.length === 9 && !full.home.includes(full.inputs[0].id));
+    check('The list explains where a full-Home shortcut went', /Not on Home/.test(await current.locator('#appearanceStatus').innerText()));
+    await closePage();
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: 'hdmi-many' + i, port: 1, name: 'Device ' + i, image: 'input-hdmi' }));
+    await page({ seed: baseline({ inputs: many }) });
+    await group('hdmi');
+    check('Twelve shortcuts disable Add', await current.locator('[data-action="hdmi.add"]').getAttribute('aria-disabled') === 'true' && (await call('where')).focusAction !== 'hdmi.add');
+    await nav(...Array(14).fill('down'));
+    check('A long list scrolls to keep focus visible', (await call('where')).focusAction === 'hdmi.edit.hdmi-many11' && await current.evaluate(() => {
+      const rows = document.getElementById('appearanceRows'), f = rows.querySelector('.is-focus'), a = rows.getBoundingClientRect(), b = f.getBoundingClientRect();
+      return b.top >= a.top - 1 && b.bottom <= a.bottom + 1;
+    }));
+    await closePage();
+    await page({ inputUnavailable: true });
+    await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.ports.retry"]');
+    check('Without the TV source API no port is invented and Add is unavailable', !(await call('actions')).some(a => a.startsWith('hdmi.port.')) && await current.locator('[data-action="hdmi.save"]').getAttribute('aria-disabled') === 'true' && /Open CleanFrame on the TV/.test(await current.locator('#appearance').innerText()));
   });
   await run('Independent app identity self-filter', async () => {
     const appId = 'AbCdEf1234.MyHome';

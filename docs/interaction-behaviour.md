@@ -12,7 +12,7 @@
 
 ## Settings and appearance
 
-Settings opens a grouped overview: Background, Layout, Typography, Focus, Apps on Home and Samsung. OK opens a group. Appearance groups use a two-pane screen with visible choices on the left and the committed Home preview on the right.
+Settings opens a grouped overview: Background, Layout, Typography, Focus, Apps on Home, HDMI shortcuts and Samsung. OK opens a group. Appearance groups use a two-pane screen with visible choices on the left and the committed Home preview on the right.
 
 | Group | Choices |
 | --- | --- |
@@ -21,6 +21,7 @@ Settings opens a grouped overview: Background, Layout, Typography, Focus, Apps o
 | Typography | Manrope, Neue Montreal, Mori, Pangram Sans, Geist and Newsreader, when available |
 | Focus | Type or Glass; Soft, Frost or Clear tint material |
 | Apps on Home | Membership and arrangement editor |
+| HDMI shortcuts | Add, edit and delete named input shortcuts |
 | Samsung | Samsung Home, TV settings and Inputs |
 
 Up/Down moves between rows. Left/Right moves between choices in a horizontal row. Focus alone changes neither the preview nor saved preferences in these appearance groups. Wallpaper has its own temporary photo preview, described below. OK applies the focused value. A checkmark identifies the applied value; the filled plate identifies remote focus. Applying the current value does not write again.
@@ -74,7 +75,20 @@ Settings → Samsung → Inputs opens the HDMI chooser. The adapter reads the TV
 
 Up/Down selects an input. OK requests that exact source; Back returns to Samsung Settings. Retry after a failed load rereads the available sources. A routing error remains an error, and a failed handoff leaves the launcher usable. Timed-out or cancelled requests cannot start a later routing or viewer action; a native request already sent to the TV may itself be uncancellable.
 
-Selecting a source, opening Samsung’s viewer, seeing the expected HDMI picture and waking a CEC device are separate results. The portable implementation does not import firmware-specific viewer payloads or claim to wake a sleeping device. No input discovery or polling runs during hidden startup.
+Selecting a source, opening Samsung’s viewer, seeing the expected HDMI picture and waking a CEC device are separate results.
+
+## HDMI shortcuts
+
+Settings → HDMI shortcuts lists saved shortcuts and Add shortcut. A shortcut has an HDMI port, a name of up to 40 characters and an image. Up to twelve can be saved.
+
+- Input offers the ports reported by `FrameDevice.sources()`, including sleeping devices. A new shortcut starts on the first connected unused port. A saved port the TV no longer reports stays selectable with a warning; no port is invented. Without the source API, Add stays unavailable.
+- Image offers bundled marks: PlayStation, a handheld console, a game controller, Apple TV, a streaming stick, a disc player, PC, receiver and a generic HDMI connector. Until a name is typed, the image suggests one (PlayStation 5, Nintendo Switch 2, Xbox, Apple TV, Fire TV, Blu-ray player, PC, Receiver, or HDMI and the port number).
+- Name opens a real text field. Samsung’s on-screen keyboard is expected to open when it takes focus. While typing, the launcher’s key map is suspended, so Backspace and the arrows edit the text. Done (key 65376) or Enter keeps the name; Cancel (65385), Escape or Back restores the previous name. A held OK opens the field once. An empty name is refused and the previous name kept. Names are always shown as text.
+- Add or Save writes the preferences once. A storage failure keeps the editor and the previous saved state. Delete asks for confirmation and removes the shortcut from Home and recent apps; the only Home item cannot be deleted.
+
+A shortcut is a Home item. It counts towards the nine Home places, appears in Dock and List with its image and name, and is arranged, removed or added again in Apps on Home. A new shortcut joins the end of Home, or Not on Home when Home is full. OK on its tile uses the same bounded `FrameDevice.setSource()` route as Inputs: the port is checked against a fresh source list, then Samsung’s viewer opens. A port that is no longer reported, a routing failure or a timeout shows an error.
+
+Shortcuts are stored as `inputs` in `cleanframe.home.v1`. Unknown or malformed entries are dropped on load and an unknown image falls back to the HDMI mark. Earlier preferences without `inputs` load unchanged. A shortcut stores the port number only: the public source API exposes no device identity, so moving a cable to another port is not detected. The on-screen keyboard, the visible HDMI picture and CEC wake must be confirmed on each TV. The portable implementation does not import firmware-specific viewer payloads or claim to wake a sleeping device. No input discovery or polling runs during hidden startup.
 
 ## Preferences and wallpaper
 

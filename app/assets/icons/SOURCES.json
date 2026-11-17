@@ -11,5 +11,13 @@
   "art": "CleanFrame original utility outline, 24px grid / 1.6px stroke",
   "apps": "CleanFrame original utility outline, 24px grid / 1.6px stroke",
   "settings": "CleanFrame original utility outline, 24px grid / 1.6px stroke",
-  "home": "CleanFrame original utility outline, 24px grid / 1.6px stroke"
+  "home": "CleanFrame original utility outline, 24px grid / 1.6px stroke",
+  "playstation": "https://raw.githubusercontent.com/simple-icons/simple-icons/4d29a35c954699b389a834aacc97dd6e7e74143c/icons/playstation.svg (shape unchanged; white fill; also unchanged in simple-icons 16.38.0)",
+  "input-handheld": "CleanFrame original HDMI device outline (handheld console), 24px grid / 1.6px stroke",
+  "input-controller": "CleanFrame original HDMI device outline (game controller), 24px grid / 1.6px stroke",
+  "input-stick": "CleanFrame original HDMI device outline (streaming stick), 24px grid / 1.6px stroke",
+  "input-disc": "CleanFrame original HDMI device outline (disc player), 24px grid / 1.6px stroke",
+  "input-pc": "CleanFrame original HDMI device outline (computer), 24px grid / 1.6px stroke",
+  "input-receiver": "CleanFrame original HDMI device outline (AV receiver), 24px grid / 1.6px stroke",
+  "input-hdmi": "CleanFrame original HDMI connector outline, 24px grid / 1.6px stroke"
 }

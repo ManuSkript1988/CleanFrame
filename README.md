@@ -33,6 +33,7 @@ The public preview uses the included Manrope, Geist and Newsreader fonts.
 - Choose and reorder Home apps; discover installed apps on the TV.
 - Select from fifteen wallpapers and save your preferences locally.
 - Open Settings → Samsung → Inputs to choose a discovered HDMI source.
+- Create named HDMI shortcuts with a bundled image in Settings → HDMI shortcuts; they appear on Home like apps.
 
 The glass and blur are rendered ahead of time. The TV loads the finished images and uses transforms and opacity for focus feedback.
 

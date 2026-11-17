@@ -4,4 +4,6 @@ Brand marks identify their respective services in CleanFrame. They are not endor
 
 Simple Icons sources are CC0; trademarks remain with their owners. Custom Brand Icons retains its MIT licence; this source record does not grant trademark rights. See SOURCES.json for exact revisions and adaptations.
 
+HDMI shortcut images use the Simple Icons PlayStation mark, the existing Apple TV mark and original `input-*` device outlines. Simple Icons no longer publishes Xbox, Nintendo Switch or Fire TV marks, so those choices use neutral controller, handheld and streaming-stick outlines rather than redrawn logos. To add an image, place a white SVG here, add its source line to SOURCES.json, regenerate metrics and add one entry to `INPUT_IMAGES` in `app/main.js`.
+
 Prime uses the two smile subpaths, not clipped wordmark text. Apple Music uses the note subpath without the outer app tile. These are intentional simplified marks beside full service names. Simple Icons CC0 and Custom Brand Icons MIT texts are included here. The old Australian TV source GPL text is retained for provenance only; no current icon uses that source.
