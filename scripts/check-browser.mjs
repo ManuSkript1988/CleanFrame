@@ -19,6 +19,9 @@ const CATALOG = IDS.map((id, i) => ({ id, name: NAMES[i], show: true, iconPath: 
   { id: 'com.samsung.tv.cobalt-yt', name: 'YouTube', show: true }
 ]);
 const walls = JSON.parse(readFileSync(root + 'app/assets/wallpapers/SOURCES.json', 'utf8'));
+// Displayed (German) names come from the runtime catalogue; SOURCES.json keeps the credit register.
+const wallCatalog = (() => { const w = {}; new Function('window', readFileSync(root + 'app/assets/wallpapers/catalog.js', 'utf8'))(w); return w.CleanFrameWallpapers; })();
+const wallName = id => wallCatalog.find(w => w.id === id).name;
 const out = root + '.local/qa/';
 mkdirSync(out, { recursive: true });
 const sourceFiles = ['app/main.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/wallpapers/SOURCES.json', 'app/assets/wallpapers/catalog.js', 'app/assets/adaptive-ink.js', 'app/assets/icons/metrics.js'];
@@ -77,43 +80,8 @@ function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure,
   if (rejectDecode) HTMLImageElement.prototype.decode = function () { return Promise.reject(new DOMException('Synthetic decode rejection')); };
   if (noFontAPI) Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
   if (!mock) return;
-  window.__tv = { catalog, catalogFailure: !!catalogFailure, launchFailure: false, holdCatalog: false, pending: [], calls: [], catalogCalls: 0 };
-  window.tizen = {
-    ApplicationControlData: function (key, value) { this.key = key; this.value = value; },
-    ApplicationControl: function (operation, uri, mime, category, data) { Object.assign(this, { operation, uri, mime, category, data }); },
-    application: {
-      getCurrentApplication() { return { appInfo: { id: currentAppId || 'nClrkHome1.FrameHome' } }; },
-      getAppsInfo(ok, fail) {
-        const tv = window.__tv;
-        tv.catalogCalls++;
-        const finish = () => tv.catalogFailure ? fail({ name: 'UnknownError', message: 'Catalogue unavailable for QA' }) : ok(tv.catalog.map(a => ({ ...a })));
-        if (tv.holdCatalog) tv.pending.push({ ok, fail }); else setTimeout(finish, 0);
-      },
-      launch(id, ok, fail) {
-        const tv = window.__tv; tv.calls.push({ method: 'launch', id });
-        setTimeout(() => tv.launchFailure ? fail({ name: 'NotFoundError', message: 'App unavailable for QA' }) : ok(), 0);
-      },
-      launchAppControl(control, id, ok, fail) {
-        const tv = window.__tv; tv.calls.push({ method: 'launchAppControl', id, control });
-        setTimeout(() => tv.launchFailure ? fail({ name: 'UnknownError', message: 'Screen unavailable for QA' }) : ok(), 0);
-      }
-    }
-  };
-  if (!inputUnavailable) {
-    __tv.inputRequests = []; __tv.sourceFailure = false; __tv.currentInput = 2;
-    __tv.videoSources = { connected: [{ type: 'HDMI', number: 2 }], disconnected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 3 }] };
-    tizen.systeminfo = { getPropertyValue(name, ok, fail) {
-      const finish = () => __tv.inputDiscoveryFailure ? fail({ name: 'SecurityError' }) : ok(__tv.videoSources);
-      if (__tv.holdInputs) __tv.inputRequests.push(finish); else setTimeout(finish, 0);
-    } };
-    tizen.tvwindow = {
-      getSource() { return { type: 'HDMI', number: __tv.currentInput }; },
-      setSource(source, ok, fail) {
-        __tv.calls.push({ method: 'setSource', number: source.number });
-        setTimeout(() => { if (__tv.sourceFailure) fail({ name: 'SecurityError' }); else { __tv.currentInput = source.number; ok(source); } }, 0);
-      }
-    };
-  }
+  // Same simulated Tizen boundary as `npm run dev:mock` (scripts/preview/tv-mock.js).
+  window.CleanFrameTVMock.install({ catalog, catalogFailure, currentAppId, inputUnavailable });
 }
 async function page(options = {}, setup) {
   current = await preview.browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -129,6 +97,7 @@ async function page(options = {}, setup) {
     if (expected.some(s => request.url().includes(s))) report.expectedNetworkFailures.push(failure);
     else if (failure.error !== 'net::ERR_ABORTED') report.pageErrors.push(failure);
   });
+  await current.addInitScript({ path: root + 'scripts/preview/tv-mock.js' });
   await current.addInitScript(installHarness, { mock: true, catalog: CATALOG, minuteMs: 60000, seed: baseline(), ...options });
   if (setup) await setup(current);
   await current.goto(preview.baseURL + '/home/', { waitUntil: options.settleNetwork === false ? 'domcontentloaded' : 'load' });
@@ -439,7 +408,7 @@ try {
       await current.waitForSelector('[data-action="input.1"]');
       const entries = await current.locator('.section-inputs .setting-choice').allTextContents();
       check('Inputs reflect actual ports and sleeping/active status ' + layout + '/' + width,
-        entries.length === 3 && entries.some(x => /HDMI 1.*Disconnected/.test(x)) && entries.some(x => /HDMI 2.*Active/.test(x)) && !entries.some(x => /HDMI 4/.test(x)), entries);
+        entries.length === 3 && entries.some(x => /HDMI 1.*Nicht verbunden/.test(x)) && entries.some(x => /HDMI 2.*Aktiv/.test(x)) && !entries.some(x => /HDMI 4/.test(x)), entries);
       check('Inputs fit and retain one focus ' + layout + '/' + width, await current.locator('.section-inputs .setting-choice').evaluateAll(elements => {
         const stage = document.getElementById('stage').getBoundingClientRect();
         return ShoreQA.where().focusCount === 1 && elements.every(e => { const r=e.getBoundingClientRect(); return r.top>=stage.top && r.bottom<=stage.bottom && r.left>=stage.left && r.right<=stage.right; });
@@ -452,26 +421,26 @@ try {
     await act('input.1'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
     check('Sleeping input selects its exact port before viewer handoff', await current.evaluate(() => __tv.calls[0].method === 'setSource' && __tv.calls[0].number === 1 && __tv.calls[1].id === 'org.tizen.tv-viewer'));
     await current.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await current.waitForFunction(() => [...document.querySelectorAll('.section-inputs .setting-choice')].some(e => /HDMI 1.*Active/.test(e.textContent)));
-    check('Returning from viewer refreshes the Active port', await current.locator('[data-action="input.1"]').innerText().then(text => text.includes('Active')));
+    await current.waitForFunction(() => [...document.querySelectorAll('.section-inputs .setting-choice')].some(e => /HDMI 1.*Aktiv/.test(e.textContent)));
+    check('Returning from viewer refreshes the Active port', await current.locator('[data-action="input.1"]').innerText().then(text => text.includes('Aktiv')));
     await current.evaluate(() => { __tv.currentInput = 3; Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
-    await current.waitForFunction(() => document.querySelector('[data-action="input.3"]').textContent.includes('Active'));
-    check('Visibility return refreshes an externally changed input', !(await current.locator('[data-action="input.1"]').innerText()).includes('Active'));
+    await current.waitForFunction(() => document.querySelector('[data-action="input.3"]').textContent.includes('Aktiv'));
+    check('Visibility return refreshes an externally changed input', !(await current.locator('[data-action="input.1"]').innerText()).includes('Aktiv'));
     await current.evaluate(() => { __tv.sourceFailure = true; __tv.calls = []; });
     await act('input.2'); await current.waitForFunction(() => ShoreQA.state().view === 'message');
-    check('Failed input selection displays an error and keeps viewer closed', (await current.locator('#stage').innerText()).includes('could not') && await current.evaluate(() => __tv.calls.length === 1));
+    check('Failed input selection displays an error and keeps viewer closed', (await current.locator('#stage').innerText()).includes('konnte') && await current.evaluate(() => __tv.calls.length === 1));
     await nav('back', 'back');
     await current.evaluate(() => { __tv.holdInputs = true; });
     await act('samsung.inputs'); await nav('back');
     await current.evaluate(() => __tv.inputRequests.splice(0).forEach(f => f()));
     check('Late discovery cannot reopen a closed chooser', (await state()).settingsGroup === 'samsung' && (await call('where')).focusCount === 1);
     await closePage(); await page({ inputUnavailable: true }); await group('samsung'); await act('samsung.inputs');
-    check('Unavailable source API offers retry without invented ports', !(await current.locator('[data-action^="input."]').count()) && (await current.locator('#stage').innerText()).includes('Open CleanFrame on the TV'));
+    check('Unavailable source API offers retry without invented ports', !(await current.locator('[data-action^="input."]').count()) && (await current.locator('#stage').innerText()).includes('nur in CleanFrame auf dem Fernseher'));
     await nav('back'); check('Unavailable inputs remain escapable', (await state()).settingsGroup === 'samsung');
     await closePage(); await page(); await current.evaluate(() => { __tv.videoSources = { connected: [], disconnected: [] }; });
     await group('samsung'); await act('samsung.inputs');
     await current.waitForSelector('[data-action="inputs.retry"]');
-    check('Empty inventory is truthful', (await current.locator('#stage').innerText()).includes('No HDMI inputs were reported'));
+    check('Empty inventory is truthful', (await current.locator('#stage').innerText()).includes('meldet keine HDMI-Eingänge'));
   });
   await run('Real catalogue and native launch boundary', async () => {
     await page(); await library();
@@ -501,10 +470,10 @@ try {
     check('Sound control claims no active output', !(await current.locator('[data-action="util.sound"]').evaluate(b => /active|is-on|is-current/.test(b.className))));
     await current.evaluate(() => { window.dispatchEvent(new Event('focus')); __tv.launchFailure = true; });
     await scene('home'); await act('util.sound'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
-    check('Sound control failure is shown', /could not|unavailable|try again/i.test(await current.locator('#stage').innerText()));
+    check('Sound control failure is shown', /konnte|nicht verfügbar|erneut versuchen/i.test(await current.locator('#stage').innerText()));
     await nav('back');
     await scene('home'); await act('home.app.netflix'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
-    check('Launch failure is shown', /could not|unavailable|try again/i.test(await current.locator('#stage').innerText()));
+    check('Launch failure is shown', /konnte|nicht verfügbar|erneut versuchen/i.test(await current.locator('#stage').innerText()));
   });
   const SHORTCUT = { id: 'hdmi-switch01', port: 3, name: 'Nintendo Switch 2', image: 'input-handheld' };
   const draft = async () => (await state()).shortcutDraft;
@@ -558,7 +527,7 @@ try {
     check('Samsung keyboard Done keeps the name as text', (await draft()).name === 'Living room <b>PS5</b>');
     await act('hdmi.name'); await current.evaluate(() => { document.activeElement.value = '   '; }); await current.keyboard.press('Enter');
     d = await draft();
-    check('An empty name is refused and the previous name kept', d.name === 'Living room <b>PS5</b>' && /needs a name/.test(d.nameError), d);
+    check('An empty name is refused and the previous name kept', d.name === 'Living room <b>PS5</b>' && /braucht einen Namen/.test(d.nameError), d);
     await act('hdmi.name'); await current.keyboard.type('x'.repeat(60));
     check('The field limits names to forty characters', (await current.evaluate(() => document.activeElement.value)).length === 40);
     await ime(65385);
@@ -600,11 +569,11 @@ try {
     check('Opening a shortcut records it as the last app', (await stored()).lastApp === SHORTCUT.id);
     await current.evaluate(() => { window.dispatchEvent(new Event('focus')); __tv.videoSources = { connected: [{ type: 'HDMI', number: 1 }], disconnected: [] }; });
     await scene('home'); await act('home.app.' + SHORTCUT.id); await current.waitForFunction(() => ShoreQA.where().view === 'message');
-    check('A port the TV no longer reports is an error, not a guess', /no longer available/i.test(await current.locator('#stage').innerText()) && !(await current.evaluate(() => __tv.calls.some(c => c.method === 'setSource' && c.number === 1))));
+    check('A port the TV no longer reports is an error, not a guess', /nicht mehr verfügbar/i.test(await current.locator('#stage').innerText()) && !(await current.evaluate(() => __tv.calls.some(c => c.method === 'setSource' && c.number === 1))));
     await nav('back');
     await current.evaluate(() => { __tv.videoSources = { connected: [{ type: 'HDMI', number: 3 }], disconnected: [] }; __tv.sourceFailure = true; });
     await scene('home'); await act('home.app.' + SHORTCUT.id); await current.waitForFunction(() => ShoreQA.where().view === 'message');
-    check('A routing failure is shown and the launcher stays usable', /could not|try again/i.test(await current.locator('#stage').innerText()));
+    check('A routing failure is shown and the launcher stays usable', /konnte|erneut versuchen/i.test(await current.locator('#stage').innerText()));
     await nav('back');
     check('Back from the error returns to Home', (await call('where')).view === 'home');
   });
@@ -633,7 +602,7 @@ try {
   await run('HDMI shortcut editing and deletion', async () => {
     await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT], lastApp: SHORTCUT.id }) });
     await group('hdmi');
-    check('Shortcut row shows its port and Home state', (await current.locator('[data-action="hdmi.edit.' + SHORTCUT.id + '"]').innerText()).includes('HDMI 3 · On Home'));
+    check('Shortcut row shows its port and Home state', (await current.locator('[data-action="hdmi.edit.' + SHORTCUT.id + '"]').innerText()).includes('HDMI 3 · Auf Home'));
     await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.port.1"]');
     check('Editing starts from the saved values', same(await draft(), { id: SHORTCUT.id, port: 3, name: 'Nintendo Switch 2', image: 'input-handheld', typing: false, nameError: '', saveError: false }));
     await act('hdmi.image.playstation');
@@ -659,13 +628,13 @@ try {
   await run('HDMI shortcut limits and unavailable inputs', async () => {
     await page({ seed: baseline({ dock: [SHORTCUT.id], inputs: [SHORTCUT] }) });
     await group('hdmi'); await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.delete"]'); await act('hdmi.delete');
-    check('The only Home item cannot be deleted', (await call('where')).view === 'message' && /Home needs one app/.test(await current.locator('#stage').innerText()) && (await state()).inputs.length === 1);
+    check('The only Home item cannot be deleted', (await call('where')).view === 'message' && /Home braucht mindestens eine App/.test(await current.locator('#stage').innerText()) && (await state()).inputs.length === 1);
     await closePage();
     await page();
     await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.2"]'); await act('hdmi.save');
     const full = await state();
     check('With nine apps on Home a new shortcut is saved off Home', full.inputs.length === 1 && full.home.length === 9 && !full.home.includes(full.inputs[0].id));
-    check('The list explains where a full-Home shortcut went', /Not on Home/.test(await current.locator('#appearanceStatus').innerText()));
+    check('The list explains where a full-Home shortcut went', /Nicht auf Home/.test(await current.locator('#appearanceStatus').innerText()));
     await closePage();
     const many = Array.from({ length: 12 }, (_, i) => ({ id: 'hdmi-many' + i, port: 1, name: 'Device ' + i, image: 'input-hdmi' }));
     await page({ seed: baseline({ inputs: many }) });
@@ -679,7 +648,123 @@ try {
     await closePage();
     await page({ inputUnavailable: true });
     await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.ports.retry"]');
-    check('Without the TV source API no port is invented and Add is unavailable', !(await call('actions')).some(a => a.startsWith('hdmi.port.')) && await current.locator('[data-action="hdmi.save"]').getAttribute('aria-disabled') === 'true' && /Open CleanFrame on the TV/.test(await current.locator('#appearance').innerText()));
+    check('Without the TV source API no port is invented and Add is unavailable', !(await call('actions')).some(a => a.startsWith('hdmi.port.')) && await current.locator('[data-action="hdmi.save"]').getAttribute('aria-disabled') === 'true' && /nur in CleanFrame auf dem Fernseher/.test(await current.locator('#appearance').innerText()));
+  });
+  // Visible chrome only; app names, product names and the TV simulation panel are excluded.
+  const ENGLISH_UI = /\b(Settings|Background|Wallpaper|Typography|Focus style|Try again|Loading|Add shortcut|Edit shortcut|Delete|Cancel|Undo|Done|Remove|Restore|Not on Home|On Home|All apps|Recently removed|Other installed|Stay|Leave Home|Choose|Apply|Return to|Open selected|Active|Connected|Disconnected|Icons|Glass|Soft|Clear tint|Photo|Dark|Light|Every|Fixed|Sound|Inputs|Input|Image|Save|Unnamed|Rotation|Home controls|App display|Then scroll|Couldn|Could not|could not|Nothing|Moving|position|shortcuts|Enter a name)\b/;
+  const chromeText = () => current.evaluate(() => {
+    const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+    const root = document.getElementById('stage'), out = [];
+    // App, shortcut and photo names are content, not interface text.
+    const skip = e => e.closest('.ph-name, .tile .label, .label-ink, .er-text, .eo-text, .gt .label, .app-focus-name, .full-name, .hdmi-preview-name, [data-action^="hdmi.edit."] .setting-name, [data-action="hdmi.name"] .setting-name, .wallpaper-choice .setting-name, .wallpaper-preview-name > span:first-child');
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.nodeValue.trim() && visible(n.parentElement) && !skip(n.parentElement)) out.push(n.nodeValue.trim());
+    document.querySelectorAll('#stage [aria-label]').forEach(e => { if (visible(e) && !e.closest('.tile, .ph-row, .gt, .er, .eo') && !/^(hdmi\.edit\.|wallpaper\.choose\.)/.test(e.getAttribute('data-action') || '')) out.push(e.getAttribute('aria-label')); });
+    return out;
+  });
+  // Every chrome label stays inside the stage and inside its own control.
+  const chromeOverflow = () => current.evaluate(() => {
+    const stage = document.getElementById('stage').getBoundingClientRect(), bad = [];
+    const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+    document.querySelectorAll('#stage .setting-name, #stage .setting-description, #stage .settings-group-name, #stage .settings-group-value, #stage .setting-label, #stage .setting-reason, #stage .appearance-desc, #stage .settings-title, #stage .s-title, #stage .s-sub, #stage .s-label, #stage .btn > span, #stage .msg-title, #stage .msg-note, #stage .u-label, #stage .util-focus-label, #stage .eo-verb, #stage .setting-choice > span:not(.setting-mark), #stage .settings-overview-hint, #stage .hdmi-preview-meta').forEach(e => {
+      if (!visible(e)) return;
+      const r = e.getBoundingClientRect(), box = e.closest('.setting-choice, .btn, .settings-group, .u');
+      const b = box && box !== e ? box.getBoundingClientRect() : null;
+      if (r.left < stage.left - 1 || r.right > stage.right + 1 || r.bottom > stage.bottom + 1 || e.scrollWidth > e.clientWidth + 2 && getComputedStyle(e).overflow !== 'visible'
+        || b && (r.left < b.left - 1 || r.right > b.right + 1)) bad.push({ cls: e.className, text: e.textContent.trim().slice(0, 60), right: Math.round(r.right - (b ? b.right : stage.right)) });
+    });
+    return bad;
+  });
+  await run('German interface text and fit', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT] }) });
+    const screens = async label => {
+      const english = (await chromeText()).filter(t => ENGLISH_UI.test(t));
+      check(label + ' shows no English interface text', !english.length, english);
+      const overflow = await chromeOverflow();
+      check(label + ' keeps every label inside its control', !overflow.length, overflow);
+    };
+    for (const width of [1920, 1280]) {
+      await current.setViewportSize({ width, height: width * 9 / 16 });
+      for (const layout of ['dock', 'list']) for (const controls of ['both', 'text']) {
+        await look({ layout, controls, bg: 'photo', focus: 'glass' }); await scene('home');
+        await nav(layout === 'dock' ? 'up' : 'right');
+        await screens('Home ' + layout + '/' + controls + ' at ' + width);
+        await nav('back'); await nav('back');
+        if ((await call('where')).view === 'message') { await screens('Leave dialog ' + layout + ' at ' + width); await nav('back'); }
+      }
+      await look({ layout: 'dock', controls: 'icons' }); await scene('home'); await nav('up', 'right');
+      await screens('Icon caption at ' + width);
+      await scene('settings'); await screens('Settings overview at ' + width);
+      for (const name of ['background', 'layout', 'typography', 'focus', 'samsung', 'hdmi']) { await group(name); await screens('Settings ' + name + ' at ' + width); }
+      await group('background'); await act('background.rotation'); await screens('Rotation at ' + width);
+      await group('samsung'); await act('samsung.inputs'); await current.waitForSelector('[data-action="input.1"]'); await screens('Inputs at ' + width);
+      await group('hdmi'); await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.port.1"]'); await screens('Edit shortcut at ' + width);
+      await act('hdmi.delete'); await screens('Delete confirmation at ' + width); await act('message.cancel');
+      await act('settings.back'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.2"]'); await screens('Add shortcut at ' + width);
+      await act('hdmi.name'); await screens('Name entry at ' + width); await nav('back');
+      await scene('editor'); await screens('Apps on Home at ' + width);
+      await library(); await screens('All apps at ' + width);
+      await wallpaper(); await screens('Wallpaper at ' + width);
+    }
+  });
+  await run('Preview TV simulation', async () => {
+    const plain = await preview.browser.newPage();
+    await plain.goto(preview.baseURL + '/home/', { waitUntil: 'load' });
+    check('The normal preview simulates nothing', await plain.evaluate(() => !window.tizen && !window.CleanFrameTVMock && !document.getElementById('tvMock')));
+    await plain.close();
+    const mockPreview = await openPreview({ mockTv: true });
+    try {
+      current = await mockPreview.browser.newPage({ viewport: { width: 1920, height: 1080 } });
+      current.on('pageerror', error => report.pageErrors.push({ section, error: error.message }));
+      await current.addInitScript(() => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('cleanframe.home.v1', JSON.stringify({ dock: ['netflix', 'youtube'] })); } });
+      await current.goto(mockPreview.baseURL + '/home/', { waitUntil: 'load' }); await ready();
+      check('The simulated preview is labelled as not a TV test', (await current.locator('#tvMock').innerText()).includes('Vorschau – kein TV-Test') && await current.evaluate(() => typeof tizen.tvwindow.setSource === 'function'));
+      check('Preview and checks use the same simulated boundary', await current.evaluate(() => typeof CleanFrameTVMock.install === 'function' && JSON.stringify(CleanFrameTVMock.defaultSources) === JSON.stringify({ connected: [{ type: 'HDMI', number: 2 }], disconnected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 3 }] })));
+      await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.3"]');
+      check('The simulated preview offers HDMI 1 to 3 and omits an unreported port', same((await call('actions')).filter(a => a.startsWith('hdmi.port.')), ['hdmi.port.1', 'hdmi.port.2', 'hdmi.port.3']));
+      await act('hdmi.image.input-controller'); await act('hdmi.port.3');
+      await act('hdmi.name'); await current.keyboard.press('End'); await current.keyboard.type(' Series X'); await current.keyboard.press('Enter');
+      await act('hdmi.save');
+      let s = await state(); const id = s.inputs[0] && s.inputs[0].id;
+      check('A shortcut can be created and saved in the preview', s.inputs.length === 1 && s.inputs[0].name === 'Xbox Series X' && s.inputs[0].port === 3 && s.home.includes(id), s.inputs);
+      await act('hdmi.edit.' + id); await current.waitForSelector('[data-action="hdmi.port.1"]'); await act('hdmi.port.1'); await act('hdmi.save');
+      check('A shortcut can be edited in the preview', (await state()).inputs[0].port === 1);
+      await scene('home'); await current.locator('#tvMock [data-mock="toggle"]').click(); await act('home.app.' + id);
+      await current.waitForFunction(() => document.getElementById('tvMock').innerText.includes('TV-Ansicht'));
+      const log = await current.evaluate(() => { const p = document.getElementById('tvMock'), l = p.querySelector('.mock-log'); return { calls: __tv.calls, current: __tv.currentInput, panel: p.innerText + '\n' + (l ? l.title : '') }; });
+      check('Opening the shortcut shows the simulated switch and viewer', log.calls.some(c => c.method === 'setSource' && c.number === 1) && log.calls.some(c => c.id === 'org.tizen.tv-viewer') && log.current === 1 && /setSource HDMI 1 → simuliert umgeschaltet/.test(log.panel) && /HDMI 1 ●/.test(log.panel), log);
+      // HDMI 3 starts in Standby, as in the checks' default sources; one click reaches Not reported.
+      await current.locator('#tvMock [data-mock="port.3"]').click();
+      check('Panel cycles a port to Not reported', (await current.locator('#tvMock [data-mock="port.3"]').innerText()) === 'Nicht gemeldet');
+      await current.locator('#tvMock [data-mock="sourceFailure"]').click();
+      await act('home.app.' + id); await current.waitForFunction(() => ShoreQA.where().view === 'message');
+      check('A simulated routing failure is shown as an error', /konnte/.test(await current.locator('#stage').innerText()));
+      await nav('back');
+      await group('hdmi'); await act('hdmi.add'); await current.waitForSelector('[data-action="hdmi.port.2"]');
+      check('A port set to Not reported is no longer offered', !(await call('actions')).includes('hdmi.port.3'));
+      await nav('back');
+      for (const width of [1920, 1280]) {
+        await current.setViewportSize({ width, height: width * 9 / 16 });
+        for (const view of ['hdmi', 'overview', 'home-list']) {
+          if (view === 'hdmi') await group('hdmi'); else if (view === 'overview') await scene('settings'); else { await look({ layout: 'list' }); await scene('home'); await nav('right'); }
+          const hit = await current.evaluate(() => {
+            const p = document.getElementById('tvMock').getBoundingClientRect(), hits = [];
+            document.querySelectorAll('#stage .appearance-desc, #stage .settings-overview-hint, #stage .settings-group, #stage .setting-choice, #stage .u, #stage .ph-row, #stage .tile, #stage .settings-status').forEach(e => {
+              const r = e.getBoundingClientRect();
+              if (!r.width || getComputedStyle(e).visibility === 'hidden' || !e.textContent.trim()) return;
+              if (r.left < p.right && r.right > p.left && r.top < p.bottom && r.bottom > p.top) hits.push(e.className + ': ' + e.textContent.trim().slice(0, 40));
+            });
+            return { open: document.getElementById('tvMock').className === 'is-open', hits };
+          });
+          check('Open simulation panel leaves ' + view + ' text uncovered at ' + width, hit.open && !hit.hits.length, hit);
+        }
+        await look({ layout: 'dock' });
+      }
+      await current.setViewportSize({ width: 1920, height: 1080 });
+      await group('hdmi'); await act('hdmi.edit.' + id); await current.waitForSelector('[data-action="hdmi.delete"]'); await act('hdmi.delete'); await act('message.hdmi-delete');
+      check('A shortcut can be deleted in the preview', !(await state()).inputs.length && !(await state()).home.includes(id));
+      check('Remote keys still drive the preview after using the panel', await current.evaluate(() => document.activeElement && document.activeElement.id === 'stage'));
+    } finally { await closePage(); await mockPreview.close(); }
   });
   await run('Independent app identity self-filter', async () => {
     const appId = 'AbCdEf1234.MyHome';
@@ -754,7 +839,7 @@ try {
     await page(); await editor(); const before = await stored();
     await current.evaluate(() => { window.__failWrites = true; }); await remove('netflix');
     check('Failed removal changes neither committed state nor storage', same((await state()).dock, before.dock) && same(await stored(), before));
-    check('Failed write gives visible feedback', /not saved|couldn.t save|tries again/i.test(await current.locator('#stage').innerText()));
+    check('Failed write gives visible feedback', /nicht gespeichert|versucht es erneut/i.test(await current.locator('#stage').innerText()));
     await current.evaluate(() => { window.__failWrites = false; }); await nav('ok');
     check('Retry commits through same action', !(await stored()).dock.includes('netflix'));
     await scene('home'); const old = await state(), oldStored = await stored();
@@ -940,7 +1025,7 @@ try {
       await walkEnabledChoices();
       check(bg + ' remote navigation skips inactive photo tools', same(await settingsSnapshot(), before));
       const reason = await current.locator('.setting-reason:visible').allTextContents();
-      check(bg + ' explains how to enable photo tools', reason.some(text => /photo/i.test(text) && /wallpaper|rotation/i.test(text)), reason);
+      check(bg + ' explains how to enable photo tools', reason.some(text => /Foto/.test(text) && /Hintergrundbild|Bildwechsel/.test(text)), reason);
     }
   });
   await run('Settings normalises remembered inactive focus', async () => {
@@ -1066,7 +1151,7 @@ try {
       await act('background.wallpaper');
       await current.waitForFunction(() => ShoreQA.state().view === 'wallpaper');
       const names = await current.locator('.wallpaper-choice .setting-name').allTextContents();
-      check(layout + ' Wallpaper shows all fifteen named choices at ' + width, same(names, walls.map(w => w.name)), names);
+      check(layout + ' Wallpaper shows all fifteen named choices at ' + width, same(names, walls.map(w => wallName(w.id))), names);
       check('Wallpaper entry keeps the existing Home frame ' + layout + '/' + width, same(await previewFrame(), frame));
       const first = await wallpaperListGeometry();
       check('Wallpaper list shows about six rows with contained labels ' + layout + '/' + width, first.fullyVisible.length >= 5 && first.fullyVisible.length <= 6 && first.partlyVisible.length <= 7 && first.clippedParts.length === 0 && first.fullyVisible.includes(first.focus) && (await call('where')).focusCount === 1, first);
@@ -1081,14 +1166,14 @@ try {
   });
   await run('Wallpaper applies in place and Back keeps the latest applied photo', async () => {
     await page(); await wallpaper(); const before = await wallpaperSaved();
-    check('Applied wallpaper omits the redundant Apply hint', !/apply.*photo/i.test(await current.locator('#appearanceDesc').innerText()));
+    check('Applied wallpaper omits the redundant Apply hint', !/Foto übernehmen/.test(await current.locator('#appearanceDesc').innerText()));
     await nav('down'); await wallpaperSettled(walls[1].id);
     check('A browsed photo is not saved by focus', same(await wallpaperSaved(), before));
-    check('Unsaved preview explains the OK action', /apply.*photo/i.test(await current.locator('#appearanceDesc').innerText()));
+    check('Unsaved preview explains the OK action', /Foto übernehmen/.test(await current.locator('#appearanceDesc').innerText()));
     await nav('ok'); await ready();
     const applied = await wallpaperSaved();
     check('OK applies once while staying inside Wallpaper', (await state()).view === 'wallpaper' && applied.committed.wall === walls[1].id && applied.writes === before.writes + 1 && applied.attempts === before.attempts + 1 && same(await wallpaperApplied(), ['wallpaper.choose.' + walls[1].id]));
-    check('Successful apply clears its redundant Apply hint', !/apply.*photo/i.test(await current.locator('#appearanceDesc').innerText()));
+    check('Successful apply clears its redundant Apply hint', !/Foto übernehmen/.test(await current.locator('#appearanceDesc').innerText()));
     check('Applied photo updates the committed Settings backdrop', applied.backdrop.src.includes('/' + walls[1].id + '-panel.jpg'));
     await nav('ok'); await current.keyboard.down('Enter'); await current.keyboard.down('Enter'); await current.keyboard.up('Enter');
     check('Repeated OK on the applied photo is a no-op', same(await wallpaperSaved(), applied));
@@ -1107,7 +1192,7 @@ try {
     await page(); await wallpaper(); const before = await wallpaperSaved();
     await nav('up');
     check('Up from the first wallpaper reaches Back without wrapping', (await state()).focusAction === 'wallpaper.back' && (await state()).shown.wall === walls[0].id);
-    check('Back still shows its return hint', /background|return/i.test(await current.locator('#appearanceDesc').innerText()));
+    check('Back still shows its return hint', /Hintergrund|Zurück/.test(await current.locator('#appearanceDesc').innerText()));
     await nav('down');
     check('Down from Back restores the current candidate', (await state()).focusAction === 'wallpaper.choose.' + walls[0].id);
     await nav(...Array(walls.length - 1).fill('down')); await wallpaperSettled(walls.at(-1).id); await wallpaperRowVisible(walls.at(-1).id);
@@ -1191,7 +1276,7 @@ try {
     await current.route(pattern, route => route.abort('failed'));
     await nav('down'); await current.waitForFunction(() => ShoreQA.actions().includes('wallpaper.retry'));
     check('Failed browse restores the committed frame rather than another unsaved preview', (await state()).shown.wall === before.committed.wall && same(await wallpaperSaved(), before) && same(await wallpaperApplied(), ['wallpaper.choose.' + before.committed.wall]));
-    check('Failed candidate remains identified for retry', (await state()).wallpaperPicker.candidate === target && /couldn.t|failed|try again/i.test(await current.locator('#appearance').innerText()));
+    check('Failed candidate remains identified for retry', (await state()).wallpaperPicker.candidate === target && /konnte nicht|erneut versuchen/i.test(await current.locator('#appearance').innerText()));
     await current.unroute(pattern); await act('wallpaper.retry'); await wallpaperSettled(target);
     check('Retrying a failed browse does not authorise a save', same(await wallpaperSaved(), before) && !(await state()).wallpaperPicker.applyPending);
     check('Successful preview Retry returns focus to its candidate', (await state()).focusAction === 'wallpaper.choose.' + target);
@@ -1215,7 +1300,7 @@ try {
     await current.waitForFunction(() => ShoreQA.actions().includes('wallpaper.retry'));
     const failed = await wallpaperSaved();
     check('Failed wallpaper save preserves applied photo, tick and backdrop', failed.stored === applied.stored && same(failed.committed, applied.committed) && same(failed.backdrop, applied.backdrop) && failed.writes === applied.writes && same(await wallpaperApplied(), ['wallpaper.choose.' + target]));
-    check('Storage failure restores the committed frame and names the failed candidate', (await state()).shown.wall === target && Object.values(await wallpaperBundle()).every(src => src.includes('/' + target)) && (await state()).wallpaperPicker.candidate === walls[3].id && (await current.locator('#appearance').innerText()).includes(walls[3].name));
+    check('Storage failure restores the committed frame and names the failed candidate', (await state()).shown.wall === target && Object.values(await wallpaperBundle()).every(src => src.includes('/' + target)) && (await state()).wallpaperPicker.candidate === walls[3].id && (await current.locator('#appearance').innerText()).includes(wallName(walls[3].id)));
     await current.evaluate(() => { __failWrites = false; }); await act('wallpaper.retry'); await ready();
     check('Storage Retry applies the candidate exactly once', (await state()).committed.wall === walls[3].id && (await state()).writes === applied.writes + 1 && (await state()).view === 'wallpaper');
     check('Storage Retry reuses the already-loaded wallpaper bundle', loadedRequests > 0 && requests.length === loadedRequests, requests);
@@ -1237,7 +1322,7 @@ try {
         ratio: b.width / b.height, inside: b.left >= r.left && b.right <= r.right && b.top >= r.top && b.bottom <= r.bottom,
         imageHidden: !img || getComputedStyle(img).display === 'none' || getComputedStyle(img).visibility === 'hidden' };
     }, target.id);
-    check('Broken thumbnail keeps its named 16:9 slot without a broken image glyph', fallback.name.includes(target.name) && fallback.slotVisible && fallback.inside && Math.abs(fallback.ratio - 16 / 9) < 0.05 && fallback.imageHidden, fallback);
+    check('Broken thumbnail keeps its named 16:9 slot without a broken image glyph', fallback.name.includes(wallName(target.id)) && fallback.slotVisible && fallback.inside && Math.abs(fallback.ratio - 16 / 9) < 0.05 && fallback.imageHidden, fallback);
     await nav('ok'); await ready();
     check('A missing thumbnail does not prevent applying its full photo', (await state()).committed.wall === target.id && Object.values(await wallpaperBundle()).every(src => src.includes('/' + target.id)));
   });
@@ -1272,7 +1357,18 @@ try {
     const focus = (await state()).focusAction; await current.keyboard.press('ArrowDown');
     check('Warm return restores remote focus', (await state()).focusAction !== focus && (await call('where')).focusCount === 1);
     const clock = await current.locator('#caption .clock').textContent();
-    check('Live 12-hour clock has no AM/PM', /^\s*\d{1,2}:\d{2}\s*$/.test(clock), clock);
+    check('Live clock uses German 24-hour time without AM/PM', /^\s*([01]\d|2[0-3]):[0-5]\d\s*$/.test(clock), clock);
+  });
+  await run('German 24-hour clock', async () => {
+    for (const [time, expected] of [['2026-11-18T13:51:20', '13:51'], ['2026-11-18T00:05:00', '00:05'], ['2026-11-18T09:07:00', '09:07'], ['2026-11-18T23:59:00', '23:59']]) {
+      await page({}, p => p.clock.setFixedTime(new Date(time)));
+      for (const layout of ['dock', 'list']) {
+        await look({ layout }); await scene('home');
+        const shown = (await current.locator('#caption .clock').textContent()).trim();
+        check(layout + ' shows ' + time.slice(11, 16) + ' as ' + expected, shown === expected, shown);
+      }
+      await closePage();
+    }
   });
   await run('Open rotation and browser fallback', async () => {
     await page({ seed: baseline({ mode: 'open' }) }); check('Open mode advances at cold start', (await state()).wallpaper === walls[1].id);
@@ -1282,9 +1378,9 @@ try {
     await current.reload(); await ready(); check('Next cold start advances again', (await state()).wallpaper === walls[2].id);
     await closePage();
     await page({ mock: false }); await act('home.app.netflix'); await current.waitForFunction(() => ShoreQA.where().view === 'message');
-    check('Browser launch honestly requires TV', /TV/.test(await current.locator('#stage').innerText()));
+    check('Browser launch honestly requires TV', /Fernseher/.test(await current.locator('#stage').innerText()));
     await nav('back'); await library();
-    check('Browser All Apps has no installed fixtures', /TV/.test(await current.locator('#stage').innerText()) && !(await current.locator('[data-action^="apps.open."]').count()));
+    check('Browser All Apps has no installed fixtures', /Fernseher/.test(await current.locator('#stage').innerText()) && !(await current.locator('[data-action^="apps.open."]').count()));
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

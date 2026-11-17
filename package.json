@@ -12,6 +12,7 @@
     "tv:launch": "python3 scripts/tv.py launch",
     "check:browser": "node scripts/check-browser.mjs",
     "dev:public": "python3 scripts/preview.py --public-fonts",
+    "dev:mock": "python3 scripts/preview.py --public-fonts --mock-tv",
     "export:public": "python3 scripts/export-public.py",
     "check:public": "python3 scripts/check-public.py",
     "check:tools": "python3 -B scripts/test-tools.py",

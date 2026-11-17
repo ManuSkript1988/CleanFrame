@@ -1,5 +1,7 @@
 # Interaction behaviour — 0.7.0
 
+The interface text is German (`lang="de-DE"`), including Settings, HDMI shortcuts, dialogs, errors, status lines and accessible labels. Product and service names (Art Mode, Samsung Home, Dock, Layout, HDMI, app names) and “Shortcut” stay in English. Wallpaper display names come from `app/assets/wallpapers/catalog.js`; the credit register in `SOURCES.json` keeps the original names. The quoted English labels below are the identifiers used in this document, not the displayed text.
+
 ## Home
 
 - Dock: Left/Right scrolls the apps without wrapping. Up enters the top-right controls, starting with Art Mode or the last selected control. Left/Right moves between Art Mode, All apps, Sound and Settings. Down or Back returns to the selected app. The clock is at the top left.
@@ -109,7 +111,7 @@ The native Home operation and startup configuration from 19 October remain separ
 
 ## Clock and rendering
 
-Both layouts show the TV's local time in 12-hour format, without AM/PM or seconds. It updates at the minute boundary and on return to the launcher. No date or clock panel is shown.
+Both layouts show the TV's local time in German 24-hour format with two-digit hours (09:05, 13:51), without seconds. It updates at the minute boundary and on return to the launcher. No date or clock panel is shown.
 
 Photographic materials and blurred panel backgrounds are generated before packaging and stay aligned with the full-screen image. Photo colour and contrast metadata are also prepared offline. Navigation does not sample image pixels, run an optics engine or apply live backdrop blur. Flat backgrounds use matching light or dark panel colours. Focus feedback uses transforms and opacity; reduced motion removes animated scaling and movement while retaining opacity feedback.
 
