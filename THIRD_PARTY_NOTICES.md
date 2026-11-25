@@ -8,9 +8,10 @@ The root MIT licence covers CleanFrame's original code and documentation. Third-
 | --- | --- |
 | Manrope | SIL Open Font License 1.1; `app/assets/manrope-OFL.txt` |
 | Geist and Newsreader | SIL Open Font License 1.1; licences beside the files in `app/assets/fonts/`, with exact sources and hashes in `app/assets/fonts/SOURCES.json` |
+| Orbitron and Roboto | SIL Open Font License 1.1 (Orbitron with Reserved Font Name “Orbitron”); unmodified upstream files with their licences in `app/assets/fonts/orbitron/` and `app/assets/fonts/roboto/`, exact sources and hashes in `app/assets/fonts/SOURCES.json` |
 | Optional PP Neue Montreal, PP Mori and PP Pangram Sans | Proprietary. Binaries stay in ignored `.local/` storage and are excluded from Git and public exports. The optional local overlay requires the user's own permission to use and embed those files. |
 
-The public app uses Manrope, Geist and Newsreader. A personal widget containing proprietary fonts must stay private. See [Pangram's licensing information](https://pangrampangram.com/pages/eula).
+The public app uses Manrope, Geist, Newsreader, Orbitron and Roboto. A personal widget containing proprietary fonts must stay private. See [Pangram's licensing information](https://pangrampangram.com/pages/eula).
 
 ## Icons and trademarks
 

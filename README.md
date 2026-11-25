@@ -23,13 +23,13 @@ npm run dev:public
 
 Open [localhost:4795/home/](http://localhost:4795/home/). Use the arrow keys, Enter and Escape, or click the controls. App launches and Samsung screens require a TV; the preview reports that limitation when you select them. To try HDMI shortcuts and launches without a TV, run `npm run dev:mock` instead: it simulates the TV boundary in the preview only and is labelled as not a TV test.
 
-The public preview uses the included Manrope, Geist and Newsreader fonts.
+The public preview uses the included Manrope, Geist, Newsreader, Orbitron and Roboto fonts.
 
 ## What you can change
 
 - Choose a List or Dock layout, with icons, names or both.
 - Use a photograph, light or dark background, with a simple 24-hour clock.
-- Adjust typography, focus and glass materials through the same Settings interface.
+- Choose font and size separately for the clock and date, app names, menu text and other text; adjust focus and glass materials through the same Settings interface.
 - Choose and reorder Home apps; discover installed apps on the TV.
 - Select from fifteen wallpapers and save your preferences locally.
 - Open Settings → Samsung → Inputs to choose a discovered HDMI source.

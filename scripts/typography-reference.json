@@ -1,0 +1,22 @@
+{
+  "about": "Regression reference for scripts/check-typography-reference.mjs. With every text area at Standard (Manrope) and 100 %, each visible text element, icon and app mark must match the reference commit. Every difference must be covered by one exception below, with its reason; an uncovered difference or an exception that no longer matches anything fails the check.",
+  "reference": {
+    "commit": "de05deb22d16a0b22ede6064a12adbbf08f27f3d",
+    "why": "Last commit before the typography settings (single Home font, no date). Its app/ files are served directly from Git objects; nothing is exported or checked out."
+  },
+  "exceptions": [
+    {
+      "id": "date-below-clock",
+      "kinds": ["added"],
+      "key": "span\\.clock-date \"",
+      "reason": "New feature: the local date (dd.mm.yyyy) below the time on Home and in the Home preview beside Settings. Only its addition is allowed; the time itself must keep its reference position, size and font."
+    },
+    {
+      "id": "typography-group-renamed",
+      "scenes": ["settings", "settings-dark"],
+      "kinds": ["removed", "added"],
+      "key": "settings-group-(name \"Schrift\"|value \"Manrope\"|name \"Schriften\"|value \"Standard\")",
+      "reason": "The Settings overview group 'Schrift' with the single font name became 'Schriften' with a summary of the four areas; at Standard the summary reads 'Standard'. Position and font of the row are unchanged."
+    }
+  ]
+}

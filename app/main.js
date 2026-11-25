@@ -41,11 +41,33 @@
     mori: { name: 'Mori', family: 'Study Mori', display: 200, ui: 400, clock: 200 },
     pangram: { name: 'Pangram Sans', family: 'Study Pangram', display: 300, ui: 400, clock: 300 },
     geist: { name: 'Geist', family: 'Study Geist', display: 300, ui: 400, clock: 300 },
-    newsreader: { name: 'Newsreader', family: 'Study Newsreader', display: 400, ui: 400, clock: 400 }
+    newsreader: { name: 'Newsreader', family: 'Study Newsreader', display: 400, ui: 400, clock: 400 },
+    // Orbitron's lightest upstream weight is 400; it is used for every role.
+    orbitron: { name: 'Orbitron', family: 'Study Orbitron', display: 400, ui: 400, clock: 400 },
+    roboto: { name: 'Roboto', family: 'Study Roboto', display: 500, ui: 400, clock: 300 }
   };
   var PRIVATE_FONTS = window.CleanFramePrivateFontIDs || [], fontMetrics = {}, unavailableFonts = {}, widthCache = {}, fontRevision = 0, fontsReady = false;
-  var LOOK_VALUES = { bg: ['dark', 'light', 'photo'], layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], font: Object.keys(FONTS).filter(function (id) { return id === 'manrope' || PRIVATE_FONTS.indexOf(id) >= 0; }), controls: ['icons', 'both', 'text'], focus: ['type', 'glass'], material: ['soft', 'frost', 'tint'] };
-  var LOOK_NAMES = { bg: 'Hintergrund', layout: 'Layout', apps: 'Apps', font: 'Schrift', controls: 'Home-Steuerung', focus: 'Fokus', material: 'Material' };
+  /* Four independent text areas. Each has a font axis (tf*) and a size axis (ts*, percent of
+     the designed size). Standard is the bundled Manrope; earlier optional fonts stay selectable
+     only in an area that already uses them. */
+  var BASE_FONTS = ['manrope', 'orbitron', 'roboto'];
+  var TYPE_AREAS = [
+    { id: 'clock', font: 'tfClock', size: 'tsClock', title: 'Uhrzeit und Datum', sizes: [80, 90, 100, 110, 120, 130, 140, 150, 160] },
+    { id: 'names', font: 'tfNames', size: 'tsNames', title: 'App- und Shortcut-Namen', sizes: [80, 90, 100, 110, 120] },
+    { id: 'menu', font: 'tfMenu', size: 'tsMenu', title: 'Einstellungs- und Menütexte', sizes: [80, 90, 100, 110, 120] },
+    { id: 'text', font: 'tfText', size: 'tsText', title: 'Sonstige Texte', sizes: [80, 90, 100, 110, 120, 130] }
+  ];
+  var TYPE = {}; TYPE_AREAS.forEach(function (a) { TYPE[a.id] = a; });
+  // A font this build ships: the public base fonts plus the catalogue's optional ones.
+  function fontInBuild(id) { return BASE_FONTS.indexOf(id) >= 0 || PRIVATE_FONTS.indexOf(id) >= 0; }
+  function fontAvailable(id) { return !!FONTS[id] && fontInBuild(id) && !unavailableFonts[id]; }
+  function fontLabel(id) { return id === 'manrope' ? 'Standard' : FONTS[id].name; }
+  var LOOK_VALUES = { bg: ['dark', 'light', 'photo'], layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], controls: ['icons', 'both', 'text'], focus: ['type', 'glass'], material: ['soft', 'frost', 'tint'] };
+  var LOOK_NAMES = { bg: 'Hintergrund', layout: 'Layout', apps: 'Apps', controls: 'Home-Steuerung', focus: 'Fokus', material: 'Material' };
+  TYPE_AREAS.forEach(function (a) {
+    LOOK_VALUES[a.size] = a.sizes; LOOK_NAMES[a.font] = a.title + ': Schriftart'; LOOK_NAMES[a.size] = a.title + ': Schriftgröße';
+  });
+  fontChoices();
   var VALUE_NAMES = { dark: 'Dunkel', light: 'Hell', photo: 'Foto', list: 'Liste', dock: 'Dock', type: 'Text', glass: 'Glas', soft: 'Weich', frost: 'Frost', tint: 'Klare Tönung', icons: 'Symbole', both: 'Symbole und Text', text: 'Text' };
   var UTIL = { art: ['Art Mode', 'art'], apps: ['Alle Apps', 'apps'], arrange: ['Anordnen', 'arrange'], sound: ['Ton', 'sound'], settings: ['Einstellungen', 'settings'] };
   var MSG = {
@@ -93,7 +115,9 @@
     undo: [], removedAt: {}, note: null, err: null,
     writes: 0, failed: 0, log: [], logN: 0, lastLaunch: null, press: null,
     wallShown: null, wallPending: null, wallError: null,
-    shown: null, pending: null, lookError: null, bundleKey: null, previewBundle: null, reflow: false, fontSwitch: false
+    shown: null, pending: null, lookError: null, bundleKey: null, previewBundle: null, reflow: false, fontSwitch: false,
+    // Saved fonts that could not load this session. They are shown as Standard but stay in S.c.
+    fontFallback: {}
   };
   var scroll = { first: 0, off: 0, photo: 0, photoArrange: 0 };
   function pick(v, list, fallback) {
@@ -101,7 +125,20 @@
     for (var i = 0; i < list.length; i++) if (list[i].toLowerCase() === v) return list[i];
     return fallback;
   }
-  function lookOf(c) { return { bg: c.bg, wall: c.wall, layout: c.layout, apps: c.apps, font: c.font, controls: c.controls, focus: c.focus, material: c.material }; }
+  function lookOf(c) {
+    var out = { bg: c.bg, wall: c.wall, layout: c.layout, apps: c.apps, controls: c.controls, focus: c.focus, material: c.material };
+    TYPE_AREAS.forEach(function (a) { out[a.font] = c[a.font]; out[a.size] = c[a.size]; });
+    return out;
+  }
+  /* The displayed look: a saved font that failed to load this session is shown as Standard.
+     Only S.shown uses this; the saved configuration (S.c) always keeps the chosen font.
+     `keep` lists font axes chosen explicitly now, which are loaded rather than replaced. */
+  function displayLook(look, keep) {
+    var out = {}, k;
+    for (k in look) if (look.hasOwnProperty(k)) out[k] = look[k];
+    TYPE_AREAS.forEach(function (a) { if (S.fontFallback[out[a.font]] && !(keep && keep.hasOwnProperty(a.font))) out[a.font] = 'manrope'; });
+    return out;
+  }
   function materialApplies(c) { c = c || S.c; return c.bg === 'photo' && (c.layout === 'dock' || c.focus === 'glass'); }
 
   /* ---------- Helpers ---------- */
@@ -166,7 +203,11 @@
   measureSpan.setAttribute('aria-hidden', 'true');
   measureSpan.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:pre;font-synthesis:none;';
   document.body.appendChild(measureSpan);
-  function homeFont() { return S.shown && S.shown.font || 'manrope'; }
+  // The applied (shown) font and size of an area; a pending choice is not shown until it loads.
+  function areaFont(area) { var id = S.shown && S.shown[TYPE[area].font]; return FONTS[id] ? id : 'manrope'; }
+  function areaScale(area) { return (S.shown && S.shown[TYPE[area].size] || 100) / 100; }
+  function roleArea(role) { return role === 'clock' ? 'clock' : role === 'display' || role === 'primary' ? 'names' : 'menu'; }
+  function typeKey() { return TYPE_AREAS.map(function (a) { return areaFont(a.id) + ':' + areaScale(a.id); }).join(','); }
   function fontRole(id, role, size) {
     var f = FONTS[id], serif = id === 'newsreader';
     return { family: f.family,
@@ -199,7 +240,7 @@
     return result;
   }
   function fontChoices() {
-    LOOK_VALUES.font = Object.keys(FONTS).filter(function (id) { return id === 'manrope' || PRIVATE_FONTS.indexOf(id) >= 0 && !unavailableFonts[id]; });
+    TYPE_AREAS.forEach(function (a) { LOOK_VALUES[a.font] = Object.keys(FONTS).filter(fontAvailable); });
   }
   function retryFontFaces(id) {
     // A rejected CSS FontFace cannot load again. Recreate only that failed family's
@@ -261,14 +302,21 @@
       if (!ok || id === 'manrope') done(ok, reason); else loadFont(id, done);
     });
   }
+  // Vertical metrics scale linearly; sizes between the measured ones are derived from the first.
+  function roleMetrics(metrics, role, size) {
+    var exact = metrics.roles[role][size], sizes, ref, m, k;
+    if (exact) return exact;
+    sizes = Object.keys(metrics.roles[role]); ref = Number(sizes[0]); m = metrics.roles[role][ref]; k = size / ref;
+    return { cap: m.cap * k, ascent: m.ascent * k, descent: m.descent * k, lower: m.lower * k };
+  }
   function fontShift(role, size) {
-    var id = homeFont(), base = fontMetrics.manrope, metrics = fontMetrics[id], a, b;
+    var id = areaFont(roleArea(role)), base = fontMetrics.manrope, metrics = fontMetrics[id], a, b;
     if (id === 'manrope' || !base || !metrics) return 0;
-    a = base.roles[role][size]; b = metrics.roles[role][size];
+    a = roleMetrics(base, role, size); b = roleMetrics(metrics, role, size);
     return (a.ascent - a.descent - a.cap - b.ascent + b.descent + b.cap) / 2;
   }
   function textWidth(text, size, weight, spacing, role) {
-    var id = homeFont(), r = fontRole(id, role || 'ui', size), key, width;
+    var id = areaFont(roleArea(role || 'ui')), r = fontRole(id, role || 'ui', size), key, width;
     if (id !== 'manrope') { weight = r.weight; spacing = role === 'display' ? -size * .01 : 0; }
     key = [id, role || 'ui', text, size, weight, spacing].join('|');
     if (widthCache.hasOwnProperty(key)) return widthCache[key];
@@ -286,14 +334,20 @@
     if (fontMetrics[id] && !fontMetrics[id].fallback) widthCache[key] = width;
     return width;
   }
-  function dockLabelSize(id) { return S.c.apps === 'text' ? (textWidth(app(id).name, 40, 600, -.8, 'primary') > 264 ? 34 : 40) : textWidth(app(id).name, 36, 500, -.8, 'primary') > 280 ? 32 : 36; }
-  function reducedDockLabel(id) { return S.c.apps !== 'icons' && dockLabelSize(id) === (S.c.apps === 'text' ? 34 : 32); }
-  function actionWidth(text) { return clamp(Math.ceil(textWidth(text, 30, 500, -.3) + 40), 288, 400); }
+  /* App and shortcut names follow the names area. A scaled label keeps the designed width
+     limits: it steps down to the reduced size first and only then ends in an ellipsis. */
+  function scaled(size, area) { return Math.round(size * areaScale(area) * 10) / 10; }
+  function dockLabelSize(id) {
+    var full = scaled(S.c.apps === 'text' ? 40 : 36, 'names'), reduced = scaled(S.c.apps === 'text' ? 34 : 32, 'names');
+    return textWidth(app(id).name, full, S.c.apps === 'text' ? 600 : 500, -.8, 'primary') > (S.c.apps === 'text' ? 264 : 280) ? reduced : full;
+  }
+  function reducedDockLabel(id) { return S.c.apps !== 'icons' && dockLabelSize(id) === scaled(S.c.apps === 'text' ? 34 : 32, 'names'); }
+  function actionWidth(text) { return clamp(Math.ceil(textWidth(text, scaled(30, 'menu'), 500, -.3) + 40), 288, 400); }
   function photoLabel(id, compact) {
-    var text = app(id).name, size = compact ? 56 : 88, limit = compact ? 640 : 992, width = textWidth(text, size, 600, -1.8, 'display');
-    if (!compact && width > limit) { size = 76; width = textWidth(text, size, 600, -1.8, 'display'); }
+    var text = app(id).name, base = compact ? 56 : 88, size = scaled(base, 'names'), limit = compact ? 640 : 992, width = textWidth(text, size, 600, -1.8, 'display');
+    if (!compact && width > limit) { base = 76; size = scaled(76, 'names'); width = textWidth(text, size, 600, -1.8, 'display'); }
     // Newsreader's ninth compact Type row otherwise enters the lower fade by .63px.
-    return { size: size, top: (compact ? 10.66 : size === 76 ? 10.36 : 9.68) + fontShift('display', size) - (compact && homeFont() === 'newsreader' ? .7 : 0), width: Math.min(limit, width), ellipsis: width > limit };
+    return { size: size, top: (compact ? 10.66 : base === 76 ? 10.36 : 9.68) + fontShift('display', size) - (compact && areaFont('names') === 'newsreader' ? .7 : 0), width: Math.min(limit, width), ellipsis: width > limit };
   }
   function listPlateWidth(id, compact) {
     if (S.c.apps === 'icons') return compact ? 120 : 144;
@@ -374,7 +428,28 @@
     }
     return null;
   }
-  function clean(saved) {
+  /* Transition for a return to an earlier CleanFrame (single Home font, look.font):
+     - look.font is still written, derived from the names area. Fonts the earlier version
+       does not know (Orbitron, Roboto) are written as Standard.
+     - All four areas and sizes are also kept under a separate key that the earlier version
+       neither reads nor removes. After a later update they are restored only while look.font
+       is still the value written here, i.e. the font was not changed in the earlier version. */
+  var TYPE_COPY_KEY = 'cleanframe.typography.v1';
+  var LEGACY_FONTS = ['manrope', 'montreal', 'mori', 'pangram', 'geist', 'newsreader'];
+  function legacyFontOf(c) { return LEGACY_FONTS.indexOf(c.tfNames) >= 0 ? c.tfNames : 'manrope'; }
+  function loadTypeCopy() {
+    try {
+      var copy = JSON.parse(localStorage.getItem(TYPE_COPY_KEY));
+      return copy && typeof copy === 'object' && !Array.isArray(copy) ? copy : null;
+    } catch (e) { return null; }
+  }
+  function saveTypeCopy(c) {
+    var copy = { version: 1, font: legacyFontOf(c) };
+    TYPE_AREAS.forEach(function (a) { copy[a.font] = c[a.font]; copy[a.size] = c[a.size]; });
+    // The main save has already succeeded; the copy only matters after a return to an earlier version.
+    try { localStorage.setItem(TYPE_COPY_KEY, JSON.stringify(copy)); } catch (e) { log('Typography copy not saved'); }
+  }
+  function clean(saved, typeCopy) {
     var s = saved && typeof saved === 'object' ? saved : {}, modern = s.look && typeof s.look === 'object' ? s.look : s;
     var legacyList = s.theme === 'list', h = [], recent = [], records = Array.isArray(s.appRecords) ? s.appRecords : [], inputs = cleanInputs(s.inputs);
     syncInputApps(inputs);
@@ -389,19 +464,33 @@
     });
     if (!h.length) h = PRIMARY.slice();
     (Array.isArray(s.recent) ? s.recent : []).forEach(function (id) { if (safeId(id) && app(id) && h.indexOf(id) < 0 && recent.indexOf(id) < 0 && recent.length < 5) recent.push(id); });
-    return {
+    var out = {
       bg: pick(modern.bg, LOOK_VALUES.bg, legacyList ? 'dark' : 'photo'), layout: pick(modern.layout, LOOK_VALUES.layout, legacyList ? 'list' : 'dock'),
       apps: pick(modern.apps, LOOK_VALUES.apps, legacyList ? 'text' : 'both'), controls: pick(modern.controls, LOOK_VALUES.controls, 'both'),
       focus: pick(modern.focus, LOOK_VALUES.focus, legacyList ? 'type' : 'glass'), material: pick(modern.material, LOOK_VALUES.material, 'soft'),
-      font: pick(modern.font, LOOK_VALUES.font, 'manrope'), wall: wall(modern.wall || s.wallpaper) ? modern.wall || s.wallpaper : WALLS[0].id,
+      wall: wall(modern.wall || s.wallpaper) ? modern.wall || s.wallpaper : WALLS[0].id,
       home: h, recent: recent, lastApp: h.indexOf(s.lastApp) >= 0 ? s.lastApp : h[0],
       mode: pick(s.mode, MODES.map(function (m) { return m.id; }), 'fixed'), inputs: inputs
     };
+    // Every known font ID is kept, also one this build does not include (a private face whose
+    // files are missing); it is shown as Standard through S.fontFallback and stays saved.
+    // Unknown or invalid IDs fall back as before.
+    function savedFont(v, fallback) { v = String(v || '').toLowerCase(); return FONTS.hasOwnProperty(v) ? v : fallback; }
+    // The former single Home font covered the clock and app names; it seeds those two areas.
+    var legacyFont = savedFont(modern.font, 'manrope'), source = modern;
+    // An earlier version keeps look.font but drops the areas. Restore them from the copy while
+    // look.font is unchanged; a font chosen in the earlier version wins over the copy.
+    if (typeCopy && !TYPE_AREAS.some(function (a) { return modern.hasOwnProperty(a.font); }) && typeof modern.font === 'string' && modern.font.toLowerCase() === typeCopy.font) source = typeCopy;
+    TYPE_AREAS.forEach(function (a) {
+      out[a.font] = savedFont(source[a.font], a.id === 'clock' || a.id === 'names' ? legacyFont : 'manrope');
+      out[a.size] = a.sizes.indexOf(source[a.size]) >= 0 ? source[a.size] : 100;
+    });
+    return out;
   }
   function serialise(c) {
     var out = {};
     Object.keys(c).forEach(function (key) { out[key] = c[key]; });
-    out.version = 2; out.look = lookOf(c); out.dock = c.home.slice(); out.wallpaper = c.wall;
+    out.version = 2; out.look = lookOf(c); out.look.font = legacyFontOf(c); out.dock = c.home.slice(); out.wallpaper = c.wall;
     out.theme = c.layout === 'list' ? 'list' : 'shore';
     out.appRecords = [];
     c.home.concat(c.recent).forEach(function (key) {
@@ -411,12 +500,15 @@
     return out;
   }
   function initialise() {
-    var saved = load(), initial; S.c = clean(saved); initial = next(S.c.home.slice(), S.c.recent.slice());
+    var saved = load(), initial; S.c = clean(saved, loadTypeCopy()); initial = next(S.c.home.slice(), S.c.recent.slice());
+    // A saved font missing from this build is shown as Standard, like a font that failed to load.
+    TYPE_AREAS.forEach(function (a) { if (!fontInBuild(S.c[a.font])) S.fontFallback[S.c[a.font]] = true; });
     S.stack = [{ id: 'home', f: { zone: 'apps', u: 0 } }];
     S.sel = S.c.lastApp; S.selIdx = S.c.home.indexOf(S.sel);
     if (saved && initial.mode === 'open') initial.wall = WALLS[(wallIndex(initial.wall) + 1) % WALLS.length].id;
     // Keep the old schema keys alongside the builder values for in-place updates.
     try { localStorage.setItem(KEY, JSON.stringify(serialise(initial))); S.c = initial; storageOk = true; } catch (e) { storageOk = false; }
+    if (storageOk) saveTypeCopy(S.c);
   }
   function clearSession() { S.undo = []; S.removedAt = {}; S.note = null; S.err = null; }
   function begin() { S.note = null; }
@@ -427,6 +519,7 @@
   function write(c, label) {
     try { localStorage.setItem(KEY, JSON.stringify(serialise(c))); }
     catch (e) { storageOk = false; S.failed++; S.err = label; log('Not saved: ' + label); return false; }
+    saveTypeCopy(c);
     if (c.wall !== S.c.wall || c.mode !== S.c.mode) resetRotation();
     storageOk = true; S.c = c; S.writes++; S.err = null; log('Saved: ' + label);
     return true;
@@ -564,8 +657,8 @@
   function addAppsRoute() { openEditor('home'); }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
-    var axis = { background: 'bg', layout: 'layout', typography: 'font', focus: 'focus' }[group];
-    var action = S.detailFocus[group] || (axis ? 'choice.' + axis + '.' + S.c[axis] : group === 'rotation' ? 'rotation.' + S.c.mode : 'samsung.home');
+    var axis = groupAxis(group);
+    var action = S.detailFocus[group] || (axis && axis !== 'mode' ? 'choice.' + axis + '.' + S.c[axis] : group === 'rotation' ? 'rotation.' + S.c.mode : 'samsung.home');
     push({ id: 'appearance', group: group, f: { action: action } });
   }
   function openMessage(key) { push({ id: 'message', msg: key, f: { b: 0 } }); }
@@ -881,7 +974,7 @@
     var n = S.c.home.length;
     return [{ id: 'background', label: 'Hintergrund', value: S.c.bg === 'photo' ? wall(S.c.wall).name : VALUE_NAMES[S.c.bg] },
       { id: 'layout', label: 'Layout', value: VALUE_NAMES[S.c.layout] },
-      { id: 'typography', label: 'Schrift', value: FONTS[S.c.font].name },
+      { id: 'typography', label: 'Schriften', value: typeSummary() },
       { id: 'focus', label: 'Fokus', value: VALUE_NAMES[S.c.focus] + (materialApplies() ? ', ' + VALUE_NAMES[S.c.material] : '') },
       { id: 'editor', label: 'Apps auf Home', value: n + (n === 1 ? ' App' : ' Apps') },
       { id: 'hdmi', label: 'HDMI-Shortcuts', value: S.c.inputs.length ? S.c.inputs.length + (S.c.inputs.length === 1 ? ' Shortcut' : ' Shortcuts') : 'Keine' },
@@ -905,8 +998,13 @@
     if (id === 'editor') openEditor('settings');
     else openAppearance(id);
   }
-  var DETAIL_NAMES = { background: 'Hintergrund', layout: 'Layout', typography: 'Schrift', focus: 'Fokus', rotation: 'Bildwechsel', samsung: 'Samsung', inputs: 'Eingänge', hdmi: 'HDMI-Shortcuts', 'hdmi-edit': 'Shortcut' };
-  function detailParent(t) { return t.group === 'rotation' ? 'Hintergrund' : t.group === 'inputs' ? 'Samsung' : t.group === 'hdmi-edit' ? 'HDMI-Shortcuts' : 'Einstellungen'; }
+  var DETAIL_NAMES = { background: 'Hintergrund', layout: 'Layout', typography: 'Schriften', focus: 'Fokus', rotation: 'Bildwechsel', samsung: 'Samsung', inputs: 'Eingänge', hdmi: 'HDMI-Shortcuts', 'hdmi-edit': 'Shortcut' };
+  TYPE_AREAS.forEach(function (a) { DETAIL_NAMES['type-' + a.id] = a.title; });
+  function typeArea(group) { return /^type-/.test(group || '') ? TYPE[group.slice(5)] : null; }
+  // The axis whose applied value receives focus when a group opens.
+  function groupAxis(group) { var a = typeArea(group); return a ? a.font : { background: 'bg', layout: 'layout', focus: 'focus', rotation: 'mode' }[group]; }
+  function detailParent(t) { return t.group === 'rotation' ? 'Hintergrund' : t.group === 'inputs' ? 'Samsung' : t.group === 'hdmi-edit' ? 'HDMI-Shortcuts' : typeArea(t.group) ? 'Schriften' : 'Einstellungen'; }
+  function typeSummary() { var seen = []; TYPE_AREAS.forEach(function (a) { var l = fontLabel(S.c[a.font]); if (seen.indexOf(l) < 0) seen.push(l); }); return seen.join(', '); }
   function detailTitle(t) { return t.group === 'hdmi-edit' ? (t.draft.id ? 'Shortcut bearbeiten' : 'Shortcut hinzufügen') : DETAIL_NAMES[t.group]; }
 
   /* ---------- HDMI shortcuts ---------- */
@@ -1045,9 +1143,45 @@
     nameField.style.left = ((r.left - ar.left) / scale) + 'px'; nameField.style.top = ((r.top - ar.top) / scale) + 'px';
     nameField.style.width = (r.width / scale) + 'px'; nameField.style.height = (r.height / scale) + 'px';
   }
+  /* A font list shows each choice in its own face; earlier optional fonts appear only while
+     this area uses them. The size control is one remote-operated slider (Left/Right). */
+  function typeSections(a) {
+    var fonts = BASE_FONTS.slice();
+    if (fonts.indexOf(S.c[a.font]) < 0) fonts.push(S.c[a.font]);
+    return [
+      { id: a.font, title: 'Schriftart', items: fonts.map(function (id) {
+        // The saved font stays selectable to retry a load, unless this build does not include it.
+        var item = choice(a.font, id, !fontAvailable(id) && (id !== S.c[a.font] || !fontInBuild(id))); item.face = id; return item;
+      }) },
+      { id: a.size, title: 'Schriftgröße', items: [{ action: 'type.size.' + a.id, label: S.c[a.size] + ' %', slider: a }] }
+    ];
+  }
+  function sliderHtml(item) {
+    var a = item.slider, v = S.c[a.size], i = a.sizes.indexOf(v), last = a.sizes.length - 1;
+    var ticks = a.sizes.map(function (s, n) { return '<span class="type-tick" style="left:' + (n / last * 100) + '%"></span>'; }).join('');
+    function step(d, end) { return '<span class="type-step' + (end ? ' is-end' : '') + '" data-z="type-step" data-i="' + d + '" data-id="' + item.action + '" aria-hidden="true">' + icon(d < 0 ? 'left' : 'right') + '</span>'; }
+    return step(-1, i <= 0) + '<span class="type-track" aria-hidden="true">' + ticks + '<span class="type-thumb" style="left:' + (i / last * 100) + '%"></span></span>'
+      + step(1, i >= last) + '<span class="type-value">' + v + ' %</span>';
+  }
+  /* The right column shows the area's real CleanFrame text at its actual size; the Home
+     preview above it and the settings themselves update with every applied change. */
+  function typeSample(a) {
+    var body;
+    if (a.id === 'clock') body = '<span class="clock-block"><span class="clock-sample">' + clockText() + '</span><span class="clock-date-sample">' + dateText() + '</span></span>';
+    else if (a.id === 'names') body = '<span class="type-sample-row">' + S.c.home.slice(0, 3).map(function (id) { return '<span>' + esc(app(id).name) + '</span>'; }).join('') + '</span>';
+    else if (a.id === 'menu') body = '<span class="type-sample-row"><span>Einstellungen</span><span>Schriftgröße</span><span>Apps auf Home</span></span>';
+    else body = '<span class="type-sample-text"><p>Änderungen sind sofort sichtbar. Schriftart und Größe gelten nur für diesen Bereich.</p><p><span class="remote-key">OK</span> Auswahl übernehmen</p></span>';
+    return '<div class="type-sample type-sample-' + a.id + '"><span class="type-sample-label">Vorschau</span>' + body + '</div>';
+  }
+  function typeStep(a, direction) {
+    var i = a.sizes.indexOf(S.c[a.size]) + direction, patch = {};
+    if (i < 0 || i >= a.sizes.length || S.pending) return;
+    patch[a.size] = a.sizes[i];
+    setLook(patch, { row: a.size });
+  }
   function choice(axis, value, disabled) {
     return { action: axis === 'mode' ? 'rotation.' + value : 'choice.' + axis + '.' + value, axis: axis, value: value, disabled: !!disabled,
-      label: axis === 'font' ? FONTS[value].name : axis === 'mode' ? MODES.filter(function (m) { return m.id === value; })[0].name : value === 'both' ? 'Beides' : VALUE_NAMES[value] };
+      label: /^tf[A-Z]/.test(axis) ? fontLabel(value) : axis === 'mode' ? MODES.filter(function (m) { return m.id === value; })[0].name : value === 'both' ? 'Beides' : VALUE_NAMES[value] };
   }
   function detailSections(t) {
     var flat = S.c.bg !== 'photo', inactive = !materialApplies();
@@ -1068,7 +1202,10 @@
       { id: 'apps', title: 'App-Darstellung', horizontal: true, items: options('apps', ['text', 'icons', 'both']) },
       { id: 'controls', title: 'Home-Steuerung', horizontal: true, items: options('controls', ['text', 'icons', 'both']) }
     ];
-    if (t.group === 'typography') return [{ id: 'font', title: '', items: options('font', LOOK_VALUES.font) }];
+    if (t.group === 'typography') return [{ id: 'type-areas', title: '', items: TYPE_AREAS.map(function (a) {
+      return { action: 'type.area.' + a.id, label: a.title, description: fontLabel(S.c[a.font]) + ' · ' + S.c[a.size] + ' %' };
+    }), reason: 'Jeder Bereich hat eigene Schriftart und Größe. Änderungen sind sofort sichtbar.' }];
+    if (typeArea(t.group)) return typeSections(typeArea(t.group));
     if (t.group === 'focus') return [
       { id: 'focus', title: 'Fokusstil', horizontal: true, items: options('focus', ['type', 'glass']) },
       { id: 'material', title: 'Material', horizontal: true, items: options('material', ['soft', 'frost', 'tint'], inactive),
@@ -1143,6 +1280,8 @@
     else if (item.action === 'samsung.home') perform('Samsung Home', FrameDevice.home);
     else if (item.action === 'samsung.settings') perform('TV-Einstellungen', FrameDevice.settings);
     else if (item.action === 'samsung.inputs') openInputs();
+    else if (item.action.indexOf('type.area.') === 0) openAppearance('type-' + item.action.slice(10));
+    else if (item.slider) return;
     else if (item.action === 'hdmi.add') openShortcut(null);
     else if (item.action.indexOf('hdmi.edit.') === 0) openShortcut(item.action.slice(10));
     else if (item.action === 'hdmi.ports.retry') loadInputs(t);
@@ -1162,10 +1301,11 @@
   V.appearance = {
     norm: function (t) {
       var rows = detailRows(t), exists = false, applied = null;
-      var axis = { background: 'bg', layout: 'layout', typography: 'font', focus: 'focus', rotation: 'mode' }[t.group];
+      var axis = groupAxis(t.group);
       rows.forEach(function (items) { items.forEach(function (item) {
         if (item.action === t.f.action) exists = true;
-        if (item.axis === axis && item.value === S.c[axis]) applied = item;
+        // Only a group with a choice axis has an applied item; otherwise focus starts on the first row.
+        if (axis && item.axis === axis && item.value === S.c[axis]) applied = item;
       }); });
       if (!exists) detailFocus(t, applied || (rows[1] || rows[0])[0], 0);
       if (t.f.column === undefined) t.f.column = detailLocation(t).column;
@@ -1173,6 +1313,7 @@
     key: function (t, k) {
       var at = detailLocation(t), row = at.row, column = at.column;
       if (k === 'back') { detailBack(); return; }
+      if ((k === 'left' || k === 'right') && at.item.slider) { typeStep(at.item.slider, k === 'left' ? -1 : 1); return; }
       if (k === 'ok') { detailOk(t, at.item); return; }
       if (k === 'up' || k === 'down') {
         row = clamp(row + (k === 'up' ? -1 : 1), 0, at.rows.length - 1);
@@ -1184,6 +1325,7 @@
       }
     },
     point: function (t, z, i, action) {
+      if (z === 'type-step') { detailRows(t).some(function (items) { return items.some(function (item) { if (item.action !== action || !item.slider) return false; detailFocus(t, item, 0); typeStep(item.slider, i); return true; }); }); return; }
       if (z !== 'detail') return;
       detailRows(t).some(function (items) { return items.some(function (item, column) {
         if (item.action !== action) return false;
@@ -1231,7 +1373,7 @@
   var sheetEl = $('sheet'), sheetView = $('sheetView');
   var IMG = { photo: $('photo'), mat: $('matImg'), bg: $('sheetBg'), field: $('phFieldImg'), fieldAlt: $('phFieldImgAlt'), utility: $('utFieldImg'), utilityAlt: $('utFieldImgAlt') };
   var sheetKey = '', slotEls = {}, dockEdgeFrame = 0, dockEdgeUntil = 0, dockAnchorCenter = 960;
-  var appliedPalette = null, appliedPhoto = null, appliedFont = null, appliedFontMetrics = null;
+  var appliedPalette = null, appliedPhoto = null, appliedTypeKey = null;
 
   /* Curated locked palettes keep the existing rendering path exactly. */
   function applyAdaptiveInk(palette) {
@@ -1261,25 +1403,57 @@
   function render() {
     var t = top(), sheet = !!V[t.id].sheet, shown = wall(S.shown ? S.shown.wall : S.c.wall), palette = ADAPTIVE_INK[shown.id];
     var adaptive = applyAdaptiveInk(palette), tr = adaptive && palette.tr ? palette.tr.pol : shown.ut.tr, br = adaptive && palette.br ? palette.br.pol : shown.ut.br;
-    stage.className = 'stage bg-' + S.c.bg + ' l-' + S.c.layout + ' v-' + S.variant + ' m-' + (materialApplies() ? S.c.material : 'none') + ' f-' + S.c.focus + ' a-' + S.c.apps + ' u-' + S.c.controls + ' g-' + S.geom + ' tone-' + shown.tone + ' tr-' + tr + ' br-' + br + wallClasses(shown) + inkRungClasses(palette, adaptive) + ' at-' + t.id + ' font-' + homeFont() + (homeFont() !== 'manrope' ? ' font-custom' : '') + (S.fontSwitch ? ' is-font-switch' : '') + (adaptive ? ' has-adaptive-ink adaptive-tl-' + palette.tl.pol : '') + (!adaptive && shown.clockInk ? ' has-clock-ink' : '') + (!adaptive && shown.dockClockInk ? ' has-dock-clock-ink' : '') + (registeredMaterial(shown.id) ? ' registered-material' : '') + (sheet ? ' is-sheet' : '') + (S.reflow ? ' is-reflow' : '');
+    stage.className = 'stage bg-' + S.c.bg + ' l-' + S.c.layout + ' v-' + S.variant + ' m-' + (materialApplies() ? S.c.material : 'none') + ' f-' + S.c.focus + ' a-' + S.c.apps + ' u-' + S.c.controls + ' g-' + S.geom + ' tone-' + shown.tone + ' tr-' + tr + ' br-' + br + wallClasses(shown) + inkRungClasses(palette, adaptive) + ' at-' + t.id + typeClasses() + (S.fontSwitch ? ' is-font-switch' : '') + (adaptive ? ' has-adaptive-ink adaptive-tl-' + palette.tl.pol : '') + (!adaptive && shown.clockInk ? ' has-clock-ink' : '') + (!adaptive && shown.dockClockInk ? ' has-dock-clock-ink' : '') + (registeredMaterial(shown.id) ? ' registered-material' : '') + (sheet ? ' is-sheet' : '') + (S.reflow ? ' is-reflow' : '');
     if (!adaptive && shown.clockInk) stage.style.setProperty('--clock-ink', shown.clockInk);
     else stage.style.removeProperty('--clock-ink');
     if (!adaptive && shown.dockClockInk) stage.style.setProperty('--dock-clock-ink', shown.dockClockInk);
     else stage.style.removeProperty('--dock-clock-ink');
-    applyHomeFont();
+    applyType();
     if (!sheet) renderHome(t);
     renderSheet(t, sheet);
     renderAppearance(t);
     renderFocusStatus(t);
   }
 
-  function applyHomeFont() {
-    var id = homeFont(), f = FONTS[id], primary = fontRole(id, 'primary'), ui = fontRole(id, 'ui'), metrics = fontMetrics[id];
-    if (appliedFont === id && appliedFontMetrics === metrics) return;
-    appliedFont = id; appliedFontMetrics = metrics;
-    var values = { 'display-family': '"' + f.family + '"', 'ui-family': '"' + ui.family + '"', 'primary-family': '"' + primary.family + '"', 'display-weight': f.display, 'ui-weight': ui.weight, 'primary-weight': primary.weight, 'clock-weight': f.clock,
-      'clock-shift': px(fontShift('clock', 48)), 'utility-shift': px(fontShift('ui', 28)), 'action-shift': px(fontShift('ui', 30)), 'heading-shift': px(fontShift('ui', 48)), 'full-name-shift': px(fontShift('primary', 30)), 'clock-digit': px(metrics ? metrics.digitCell : 0) };
-    Object.keys(values).forEach(function (key) { homeEl.style.setProperty('--font-' + key, String(values[key])); });
+  /* Each area exposes its family, weights and size factor as stage variables. Standard
+     (Manrope) keeps the original rules; only a custom area adds a type-<area>-custom class. */
+  var opticCache = {};
+  function opticRatio(id, role) {
+    var key = id + '|' + role, r, cap, x;
+    if (opticCache.hasOwnProperty(key)) return opticCache[key];
+    r = fontRole(id, role, 100);
+    measureContext.font = r.weight + ' 100px "' + r.family + '", Manrope, Arial, sans-serif';
+    cap = measureContext.measureText('H').actualBoundingBoxAscent; x = measureContext.measureText('x').actualBoundingBoxAscent;
+    var ratio = cap && x ? Math.round((cap - x) / 4) / 100 : 0;
+    // Keep the value only once the face itself has loaded, never a fallback measurement.
+    if (fontMetrics[id] && !fontMetrics[id].fallback) opticCache[key] = ratio;
+    return ratio;
+  }
+  function typeClasses() {
+    return TYPE_AREAS.map(function (a) { var id = areaFont(a.id); return ' type-' + a.id + '-' + id + (id !== 'manrope' ? ' type-' + a.id + '-custom' : ''); }).join('');
+  }
+  function applyType() {
+    var key = typeKey() + '|' + fontRevision, clock = fontMetrics[areaFont('clock')], values = {};
+    if (appliedTypeKey === key) return;
+    appliedTypeKey = key;
+    TYPE_AREAS.forEach(function (a) {
+      var f = FONTS[areaFont(a.id)];
+      values['--type-' + a.id + '-family'] = '"' + f.family + '",Manrope,Arial,sans-serif';
+      values['--type-' + a.id + '-scale'] = String(areaScale(a.id));
+      values['--type-' + a.id + '-w'] = String(a.id === 'clock' ? f.clock : f.ui);
+    });
+    values['--type-names-display-w'] = String(FONTS[areaFont('names')].display);
+    // Icons beside text follow the text's optical centre (halfway between the capital and
+    // lowercase centres). The designed positions are Manrope's, so only the difference from
+    // Manrope is applied: Standard stays exactly as designed, another font shifts by its delta.
+    TYPE_AREAS.forEach(function (a) {
+      var id = areaFont(a.id), role = a.id === 'names' ? 'display' : a.id === 'clock' ? 'clock' : 'ui';
+      values['--type-' + a.id + '-optic'] = String(id === 'manrope' ? 0 : Math.round((opticRatio(id, role) - opticRatio('manrope', role)) * 100) / 100);
+    });
+    Object.keys(values).forEach(function (name) { stage.style.setProperty(name, values[name]); });
+    values = { 'clock-shift': px(fontShift('clock', scaled(48, 'clock'))), 'utility-shift': px(fontShift('ui', scaled(28, 'menu'))), 'action-shift': px(fontShift('ui', scaled(30, 'menu'))),
+      'heading-shift': px(fontShift('ui', scaled(48, 'menu'))), 'full-name-shift': px(fontShift('primary', scaled(30, 'names'))), 'clock-digit': px(clock ? clock.digitCell * areaScale('clock') : 0) };
+    Object.keys(values).forEach(function (name) { homeEl.style.setProperty('--font-' + name, String(values[name])); });
   }
 
   function homeState(t) {
@@ -1303,15 +1477,39 @@
     var d = new Date(), h = d.getHours(), m = d.getMinutes();
     return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
+  // The TV's local date as dd.mm.yyyy; it shares the clock's minute-boundary update.
+  function dateText() {
+    var d = new Date(), day = d.getDate(), month = d.getMonth() + 1;
+    return (day < 10 ? '0' : '') + day + '.' + (month < 10 ? '0' : '') + month + '.' + d.getFullYear();
+  }
   function clockHtml() {
-    var text = clockText(), metrics = fontMetrics[homeFont()];
+    var text = clockText(), metrics = fontMetrics[areaFont('clock')];
     if (!metrics || !metrics.digitCell) return text;
     return text.replace(/[0-9]/g, function (digit) { return '<span class="clock-digit">' + digit + '</span>'; });
   }
   function renderCaption(t, hs) {
-    var html = '<span class="clock">' + clockHtml() + '</span>';
-    if (S.c.apps !== 'icons' && hs.items[hs.i] && (S.c.layout === 'list' ? photoLabel(hs.items[hs.i].id, false).size < 88 || photoLabel(hs.items[hs.i].id, false).ellipsis : hs.zone === 'apps' && reducedDockLabel(hs.items[hs.i].id))) html += '<span class="cap-line full-name">' + esc(app(hs.items[hs.i].id).name) + '</span>';
+    // Time and date form one block; the date is centred below the time.
+    var html = '<span class="clock-block"><span class="clock">' + clockHtml() + '</span><span class="clock-date">' + dateText() + '</span></span>';
+    if (S.c.apps !== 'icons' && hs.items[hs.i] && (S.c.layout === 'list' ? photoLabel(hs.items[hs.i].id, false).size < scaled(88, 'names') || photoLabel(hs.items[hs.i].id, false).ellipsis : hs.zone === 'apps' && reducedDockLabel(hs.items[hs.i].id))) html += '<span class="cap-line full-name">' + esc(app(hs.items[hs.i].id).name) + '</span>';
     setHTML(caption, html);
+    fitDate();
+  }
+  /* The date stays within the width of the time: if it would be wider, its font size shrinks by
+     that ratio (--date-fit on the caption). The time itself is never changed. The key uses only
+     state and strings, so an unchanged key returns before any DOM access or layout read; the
+     elements are measured only when the time, date, layout or fonts change. */
+  var dateFitKey = '';
+  function fitDate() {
+    var key = typeKey() + '|' + fontRevision + '|' + clockText() + '|' + dateText() + '|' + S.c.layout, clockEl, dateEl, cw, dw;
+    if (key === dateFitKey) return;
+    clockEl = caption.querySelector('.clock'); dateEl = caption.querySelector('.clock-date');
+    // Not shown yet (no layout box): measure on a later render.
+    if (!clockEl || !dateEl || !clockEl.getClientRects().length) return;
+    caption.style.setProperty('--date-fit', '1');
+    cw = clockEl.getBoundingClientRect().width; dw = dateEl.getBoundingClientRect().width;
+    if (!cw || !dw) return;
+    caption.style.setProperty('--date-fit', String(dw > cw ? Math.floor((cw - .5) / dw * 1000) / 1000 : 1));
+    dateFitKey = key;
   }
 
   function utilBtn(z, i, action, inner, extra, name) {
@@ -1335,17 +1533,17 @@
     var text, key, r, sr, scale, width, x;
     if (!button) { utilFocusLabel.className = 'util-focus-label'; utilFocusKey = ''; return; }
     text = S.err ? 'Nicht gespeichert. OK versucht es erneut.' : button.getAttribute('aria-label');
-    key = button.getAttribute('data-action') + '|' + text + '|' + homeFont();
+    key = button.getAttribute('data-action') + '|' + text + '|' + typeKey();
     if (key !== utilFocusKey) {
       utilFocusLabel.className = 'util-focus-label'; utilFocusLabel.textContent = text;
       utilFocusLabel.offsetWidth;
       utilFocusKey = key;
     }
     r = button.getBoundingClientRect(); sr = sceneEl.getBoundingClientRect(); scale = sr.width / 1920 || 1;
-    width = Math.ceil(textWidth(text, 28, 500, -.2) + 8); x = (r.left + r.width / 2 - sr.left) / scale - width / 2;
+    width = Math.ceil(textWidth(text, scaled(28, 'menu'), 500, -.2) + 8); x = (r.left + r.width / 2 - sr.left) / scale - width / 2;
     if (S.c.layout === 'list') x = 1730 - width;
     utilFocusLabel.style.width = width + 'px'; utilFocusLabel.style.left = clamp(x, 112, 1808 - width) + 'px';
-    utilFocusLabel.style.top = ((S.c.layout === 'list' ? (r.top + r.height / 2 - sr.top) / scale - 19 : 140) + fontShift('ui', 28)) + 'px';
+    utilFocusLabel.style.top = ((S.c.layout === 'list' ? (r.top + r.height / 2 - sr.top) / scale - 19 : 140) + fontShift('ui', scaled(28, 'menu'))) + 'px';
     utilFocusLabel.className = 'util-focus-label is-on';
   }
   function renderUtilityLens(button, iconsOnly) {
@@ -1382,7 +1580,7 @@
     var it = hs.items[hs.i], width, x, y, placement;
     if (S.c.apps !== 'icons' || hs.mode !== 'browse' || hs.zone !== 'apps' || !it) { appFocusName.className = 'app-focus-name'; return; }
     appFocusName.textContent = app(it.id).name;
-    width = Math.min(S.c.layout === 'list' ? 1056 : 1640, Math.ceil(textWidth(app(it.id).name, S.c.layout === 'list' ? 40 : 36, 500, -.6, 'primary') + 8));
+    width = Math.min(S.c.layout === 'list' ? 1056 : 1640, Math.ceil(textWidth(app(it.id).name, scaled(S.c.layout === 'list' ? 40 : 36, 'names'), 500, -.6, 'primary') + 8));
     appFocusName.style.width = width + 'px';
     if (S.c.layout === 'list') {
       x = 280; placement = phFields[photoPlateIndex]._placement;
@@ -1390,7 +1588,7 @@
     } else {
       x = clamp(dockAnchorCenter - width / 2, 140, 1780 - width); y = 932;
     }
-    appFocusName.style.left = x + 'px'; appFocusName.style.top = (y + fontShift('primary', S.c.layout === 'list' ? 40 : 36)) + 'px';
+    appFocusName.style.left = x + 'px'; appFocusName.style.top = (y + fontShift('primary', scaled(S.c.layout === 'list' ? 40 : 36, 'names'))) + 'px';
     appFocusName.className = 'app-focus-name is-on';
   }
 
@@ -1467,7 +1665,7 @@
     keyed(track, empty ? [] : items, function (el, it, i) {
       var a = it.id ? app(it.id) : null, left = i * g.pitch, focus = tileFocus && i === anchor, sel = tileSel && i === anchor;
       var lifted = hs.lifted && i === anchor, partial = g.broad && (left - off < -1 || left + g.tw - off > g.shelf + 1);
-      setContent(el, it.kind + '|' + (it.id || '') + '|' + (it.id ? dockLabelSize(it.id) : full) + '|' + S.c.bg + '|' + S.c.apps + '|' + homeFont(), function () { return '<span class="tile-content">' + dockTileHtml(it, full) + '</span>'; });
+      setContent(el, it.kind + '|' + (it.id || '') + '|' + (it.id ? dockLabelSize(it.id) : full) + '|' + S.c.bg + '|' + S.c.apps + '|' + typeKey(), function () { return '<span class="tile-content">' + dockTileHtml(it, full) + '</span>'; });
       el.className = 'tile k-' + it.kind + (focus ? ' is-focus' : '') + (sel ? ' is-sel' : '') + (lifted ? ' is-lifted' : '') + (partial ? ' is-partial' : '')
         + (a && !a.mark ? ' is-text' : '') + (it.kind === 'add' && full ? ' is-full' : '') + (it.kind === 'app' && S.press === it.id ? ' is-press' : '')
         + (lifted && i === 0 ? ' no-l' : '') + (lifted && i >= ns - 1 ? ' no-r' : '');
@@ -1569,7 +1767,9 @@
     phRows.style.top = (compact ? 72 : 148) + 'px';
     keyed(phRows, items, function (row, it, i) {
       var typography = photoLabel(it.id, compact), focus = rowFocus && i === anchor, lifted = hs.lifted && i === anchor, markImage, body = '';
-      setContent(row, it.id + '|' + typography.size + '|' + S.c.bg + '|' + S.c.apps + '|' + homeFont(), function () {
+      // Only a changed size is written, so unchanged rows cause no style recalculation.
+      if (row._phSize !== typography.size) { row._phSize = typography.size; row.style.setProperty('--ph-size', typography.size + 'px'); }
+      setContent(row, it.id + '|' + typography.size + '|' + S.c.bg + '|' + S.c.apps + '|' + typeKey(), function () {
         if (S.c.apps !== 'text') body += appMark(app(it.id), S.c.apps === 'icons' ? compact ? 64 : 88 : compact ? 60 : 84, S.c.apps === 'icons' ? compact ? 64 : 88 : compact ? 44 : 64, S.c.apps === 'icons' ? compact ? 52 : 72 : compact ? 42 : 54);
         if (S.c.apps !== 'icons') body += '<span class="ph-name" style="font-size:' + typography.size + 'px;top:' + typography.top + 'px">' + esc(app(it.id).name) + '</span>';
         return '<span class="ph-group">' + body + '</span><span class="ph-move ph-move-up">' + icon('up') + '</span><span class="ph-move ph-move-down">' + icon('down') + '</span>';
@@ -1630,12 +1830,14 @@
     appearanceEl.className = 'appearance detail-' + t.group;
     appearanceRows.className = 'appearance-rows';
     appearanceTitle.textContent = detailTitle(t);
-    var at = detailLocation(t), selected = at.item, error = S.lookError, status = '', hint, focused;
+    var at = detailLocation(t), selected = at.item, error = S.lookError, status = '', hint, focused, area;
     function command(item, inner, cls) {
       var applied = item.axis ? S.c[item.axis] === item.value : !!item.checked;
       var loading = !!(item.axis && S.pending && S.pending.target[item.axis] === item.value && S.pending.row === item.axis);
-      return '<button type="button" tabindex="-1" class="setting-choice' + (cls ? ' ' + cls : '') + (t.f.action === item.action ? ' is-focus' : '') + (item.disabled ? ' is-disabled' : '') + (applied ? ' is-applied' : '') + (loading ? ' is-loading' : '') + '"'
-        + (item.axis || item.checked !== undefined ? ' role="radio" aria-checked="' + !!applied + '"' : '') + ' aria-label="' + esc(item.axis && item.value === 'both' ? 'Symbole und Text' : item.label) + '" aria-disabled="' + !!item.disabled + '" aria-busy="' + loading + '"'
+      // The size slider waits while a font loads; it says so instead of ignoring the keys silently.
+      var busy = !!(item.slider && S.pending);
+      return '<button type="button" tabindex="-1" class="setting-choice' + (cls ? ' ' + cls : '') + (t.f.action === item.action ? ' is-focus' : '') + (item.disabled ? ' is-disabled' : '') + (applied ? ' is-applied' : '') + (loading ? ' is-loading' : '') + (busy ? ' is-busy' : '') + '"'
+        + (item.axis || item.checked !== undefined ? ' role="radio" aria-checked="' + !!applied + '"' : '') + (item.slider ? ' role="slider" aria-valuemin="' + item.slider.sizes[0] + '" aria-valuemax="' + item.slider.sizes[item.slider.sizes.length - 1] + '" aria-valuenow="' + S.c[item.slider.size] + '" aria-valuetext="' + S.c[item.slider.size] + ' Prozent"' : '') + ' aria-label="' + esc(item.axis && item.value === 'both' ? 'Symbole und Text' : item.label) + '" aria-disabled="' + (!!item.disabled || busy) + '" aria-busy="' + (loading || busy) + '"'
         + ' data-z="detail" data-i="0" data-id="' + esc(item.action) + '" data-action="' + esc(item.action) + '">' + inner
         + (item.axis ? '<span class="setting-tick" aria-hidden="true">' + (applied ? icon('check') : '') + '</span>' : '') + '</button>';
     }
@@ -1650,30 +1852,40 @@
             ? '<span class="setting-swatch swatch-' + item.value + '" aria-hidden="true"></span>'
             : '<img class="setting-swatch" src="' + WP + S.c.wall + '-thumb.jpg" alt="">';
           if (item.mark) body += '<span class="setting-mark" aria-hidden="true">' + markHtml(item.mark, item.iconOnly ? 64 : 56, item.iconOnly ? 52 : 44, item.iconOnly ? 46 : 38) + '</span>';
-          if (!item.iconOnly) body += '<span class="setting-copy"><span class="setting-name">' + esc(item.label) + '</span>'
+          if (item.slider) return command(item, sliderHtml(item), 'setting-slider');
+          if (!item.iconOnly) body += '<span class="setting-copy"><span class="setting-name"' + (item.face ? ' style="font-family:&quot;' + FONTS[item.face].family + '&quot;,Manrope,Arial,sans-serif;font-weight:' + FONTS[item.face].ui + ';letter-spacing:0"' : '') + '>' + esc(item.label) + '</span>'
             + (item.description ? '<span class="setting-description">' + esc(item.description) + '</span>' : '') + '</span>';
           if (!item.axis && item.checked === undefined && !item.plain) body += icon(item.textEntry ? 'edit' : 'right', 'setting-forward');
           return command(item, body, (item.description ? 'has-description' : '') + (item.iconOnly ? ' setting-image' : '') + (item.textEntry ? ' setting-text' + (item.empty ? ' is-empty' : '') + (t.typing ? ' is-typing' : '') : ''));
         }).join('') + '</div>'
         + (section.reason ? '<p class="setting-reason">' + esc(section.reason) + '</p>' : '') + '</section>';
     }).join(''));
-    if (S.pending) status = '<p>' + esc(S.pending.row === 'font' ? FONTS[S.pending.target.font].name : 'Die Auswahl') + ' wird geladen …</p><p>Zurück bricht diese Änderung ab.</p>';
+    if (S.pending) status = '<p>' + esc(S.pending.font && FONTS[S.pending.font] ? FONTS[S.pending.font].name : 'Die Auswahl') + ' wird geladen …</p><p>Zurück bricht diese Änderung ab.</p>';
     else if (error) {
       status = '<p class="setting-error">' + (error.type === 'save' ? 'Die Änderung konnte nicht gespeichert werden.' : error.type === 'font' ? esc(FONTS[error.font].name) + ' konnte nicht geladen werden.' : 'Die Darstellung konnte nicht geladen werden.') + ' Die bisherige Auswahl bleibt erhalten.</p>'
         + command({ action: 'settings.retry', label: 'Erneut versuchen' }, '<span>Erneut versuchen</span>', 'setting-retry');
     }
     if (t.group === 'hdmi' && t.notice) status = '<p>' + esc(t.notice) + '</p>';
     if (t.group === 'hdmi-edit') status = hdmiPreview(t);
+    if (typeArea(t.group) && !status) {
+      area = typeArea(t.group);
+      // A saved font shown as Standard this session: say so; OK on that font tries again.
+      if (S.fontFallback[S.c[area.font]]) status = fontInBuild(S.c[area.font])
+        ? '<p class="setting-error">' + esc(FONTS[S.c[area.font]].name) + ' konnte nicht geladen werden. Angezeigt wird Standard; die Auswahl bleibt gespeichert.</p><p>OK auf ' + esc(FONTS[S.c[area.font]].name) + ' versucht es erneut.</p>'
+        : '<p class="setting-error">' + esc(FONTS[S.c[area.font]].name) + ' ist in dieser Version nicht enthalten. Angezeigt wird Standard; die Auswahl bleibt gespeichert.</p>';
+      status += typeSample(area);
+    }
     setHTML(appearanceStatus, status);
     hint = selected.disabled ? '' : selected.action === 'settings.back' ? 'Zurück zu ' + detailParent(t) : selected.action === 'settings.retry' ? 'Änderung erneut versuchen' : selected.axis ? 'Auswahl übernehmen' : selected.action === 'background.wallpaper' ? 'Hintergrundbild wählen' : selected.action === 'background.rotation' ? 'Wechselintervall wählen'
-      : t.group === 'hdmi' || t.group === 'hdmi-edit' ? hdmiHint(t, selected) : 'Auf dem Fernseher öffnen';
-    setHTML(appearanceDesc, t.typing ? '<span class="remote-key">Fertig</span><span>Namen übernehmen · Zurück bricht ab</span>' : hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
+      : t.group === 'hdmi' || t.group === 'hdmi-edit' ? hdmiHint(t, selected) : selected.action.indexOf('type.area.') === 0 ? 'Schriftart und Größe einstellen' : 'Auf dem Fernseher öffnen';
+    setHTML(appearanceDesc, t.typing ? '<span class="remote-key">Fertig</span><span>Namen übernehmen · Zurück bricht ab</span>' : selected.slider ? (S.pending ? '<span>Schrift wird geladen … bitte kurz warten</span>' : '<span class="remote-key">◀ ▶</span><span>Schriftgröße ändern</span>') : hint ? '<span class="remote-key">OK</span><span>' + esc(hint) + '</span>' : '');
     // Long shortcut lists scroll within the settings column; focus always stays visible.
     focused = appearanceRows.querySelector('.is-focus');
-    if (t.group === 'hdmi' || t.group === 'hdmi-edit') {
+    if (focused) {
       if (focused && focused.offsetTop + focused.offsetHeight > appearanceRows.scrollTop + appearanceRows.clientHeight) appearanceRows.scrollTop = focused.offsetTop + focused.offsetHeight - appearanceRows.clientHeight;
       else if (focused && focused.offsetTop < appearanceRows.scrollTop) appearanceRows.scrollTop = Math.max(0, focused.offsetTop - 48);
-    } else appearanceRows.scrollTop = 0;
+    }
+    if (focused && appearanceRows.scrollTop && focused.offsetTop + focused.offsetHeight <= appearanceRows.clientHeight) appearanceRows.scrollTop = 0;
     placeNameField();
   }
   function hdmiHint(t, item) {
@@ -1883,6 +2095,10 @@
         html += '<button type="button" tabindex="-1" class="settings-group' + (r.id === t.f.id ? ' is-focus' : '') + '" data-z="row" data-i="0" data-id="' + r.id + '" data-action="settings.' + (r.id === 'editor' ? 'editor' : 'group.' + r.id) + '"><span class="settings-group-copy"><span class="settings-group-name">' + esc(r.label) + '</span><span class="settings-group-value">' + esc(r.value) + '</span></span>' + icon('right') + '</button>';
       });
       setHTML(el.list, html);
+      // Larger menu text can make the groups taller than the column; keep the focused one visible.
+      var focused = el.list.querySelector('.is-focus');
+      if (focused && focused.offsetTop + focused.offsetHeight > el.list.scrollTop + el.list.clientHeight) el.list.scrollTop = focused.offsetTop + focused.offsetHeight - el.list.clientHeight;
+      else if (focused && focused.offsetTop < el.list.scrollTop) el.list.scrollTop = focused.offsetTop;
     },
     message: function (t, el) {
       setHTML(el.acts, messageContent(t).actions.map(function (a, i) {
@@ -1929,7 +2145,9 @@
       Object.keys(bundle.imgs).forEach(function (k) { if (!previewOnly || k !== 'bg') swapImg(k, bundle.imgs[k]); });
       S.bundleKey = bundle.key;
     }
-    S.shown = { bg: look.bg, wall: look.wall, material: look.material, font: look.font };
+    look = displayLook(look);
+    S.shown = { bg: look.bg, wall: look.wall, material: look.material };
+    TYPE_AREAS.forEach(function (a) { S.shown[a.font] = look[a.font]; S.shown[a.size] = look[a.size]; });
     phFields.concat(utFields).forEach(function (el) { var p = el._placement; if (p) fieldTransform(el, p.x, p.y, p.width, p.height); });
     S.wallShown = look.wall; S.wallPending = null; S.wallError = null;
   }
@@ -1938,7 +2156,7 @@
     if (!patch || typeof patch !== 'object') throw new Error('look needs an appearance patch');
     for (k in patch) if (patch.hasOwnProperty(k)) {
       if (k === 'wall') { if (!wall(patch[k])) throw new Error('Unknown wallpaper: ' + patch[k]); }
-      else if (k === 'font') { if (!FONTS[patch[k]] || patch[k] !== 'manrope' && PRIVATE_FONTS.indexOf(patch[k]) < 0) throw new Error('Unavailable font: ' + patch[k]); }
+      else if (/^tf[A-Z]/.test(k) && LOOK_VALUES[k]) { if (!FONTS[patch[k]] || !fontInBuild(patch[k])) throw new Error('Unavailable font: ' + patch[k]); }
       else if (!LOOK_VALUES[k] || LOOK_VALUES[k].indexOf(patch[k]) < 0) throw new Error('Invalid appearance value: ' + k);
       out[k] = patch[k];
     }
@@ -1946,12 +2164,13 @@
   }
   function cancelLook() { wallToken++; S.pending = null; S.wallPending = null; S.lookError = null; }
   function setLook(patch, options) {
-    var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, needsFont, changed, loadedBundle = null, imageDone, fontDone, failed = false;
+    var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, needsFont, fontsNeeded, failedFont = null, changed, loadedBundle = null, imageDone, fontDone, failed = false;
     for (k in changes) if (changes.hasOwnProperty(k)) target[k] = changes[k];
     changed = Object.keys(target).some(function (key) { return target[key] !== S.c[key]; });
     cancelLook(); S.err = null; token = wallToken;
     function finish(bundle) {
-      var c = next(S.c.home.slice(), S.c.recent.slice()), fontChanged = target.font !== S.c.font, reflow = target.apps !== S.c.apps || target.controls !== S.c.controls || fontChanged, frame, fontFrame;
+      // Compare what will be shown with what is shown, so a recovered font also crossfades.
+      var c = next(S.c.home.slice(), S.c.recent.slice()), shownTarget = displayLook(target), fontChanged = !!S.shown && TYPE_AREAS.some(function (a) { return shownTarget[a.font] !== S.shown[a.font] || shownTarget[a.size] !== S.shown[a.size]; }), reflow = target.apps !== S.c.apps || target.controls !== S.c.controls || fontChanged, frame, fontFrame;
       Object.keys(target).forEach(function (key) { c[key] = target[key]; });
       S.pending = null; S.wallPending = null;
       if (!opts.transient && changed && !write(c, 'Appearance')) { S.lookError = { type: 'save', patch: changes, row: opts.row || S.appearanceFocus, transient: false }; render(); syncRotation(); return; }
@@ -1975,9 +2194,14 @@
       if (token !== wallToken || failed) return;
       failed = true; S.pending = null; S.wallPending = null;
       if (type === 'load') S.wallError = target.wall;
-      S.lookError = { type: type, reason: reason || null, patch: changes, row: opts.row || (type === 'font' ? 'font' : S.appearanceFocus), transient: !!opts.transient, wall: target.wall, font: target.font };
-      if (type === 'font') log((opts.startup ? 'font fallback: ' : 'Font kept: ') + (opts.startup ? target.font : FONTS[S.c.font].name) + (opts.startup ? '' : ' (' + reason + ')'));
-      if (type === 'font' && opts.startup && target.font !== 'manrope') { setLook({ font: 'manrope' }, { transient: true }); return; }
+      S.lookError = { type: type, reason: reason || null, patch: changes, row: opts.row || S.appearanceFocus, transient: !!opts.transient, wall: target.wall, font: failedFont };
+      if (type === 'font') log((opts.startup ? 'font fallback: ' : 'Font kept: ') + failedFont + (opts.startup ? '' : ' (' + reason + ')'));
+      if (type === 'font' && opts.startup && failedFont !== 'manrope') {
+        // A saved font that cannot load is shown as Standard for this session. Only the display
+        // changes: S.c and storage keep the chosen font, so later saves cannot replace it.
+        S.fontFallback[failedFont] = true;
+        setLook({}, { transient: true, startup: true }); return;
+      }
       render(); syncRotation();
     }
     function complete() {
@@ -1986,9 +2210,13 @@
       window.requestAnimationFrame(function () { if (!failed && token === wallToken) finish(loadedBundle); });
     }
     needs = target.bg === 'photo' && S.bundleKey !== bundleKey(target) && (!S.shown || S.shown.bg !== 'photo' || target.wall !== S.c.wall || materialApplies(target));
-    needsFont = !fontMetrics[target.font]; imageDone = !needs; fontDone = !needsFont;
+    // Fonts in the session fallback are not reloaded by unrelated changes; choosing one again does.
+    fontsNeeded = [];
+    var loadLook = displayLook(target, changes);
+    TYPE_AREAS.forEach(function (a) { var id = loadLook[a.font]; if (!fontMetrics[id] && fontsNeeded.indexOf(id) < 0) fontsNeeded.push(id); });
+    needsFont = fontsNeeded.length > 0; imageDone = !needs; fontDone = !needsFont;
     if (!needs && !needsFont) { finish(null); return; }
-    S.pending = { patch: changes, target: target, row: opts.row || (needsFont ? 'font' : S.appearanceFocus), transient: !!opts.transient, preview: false };
+    S.pending = { patch: changes, target: target, row: opts.row || S.appearanceFocus, font: fontsNeeded[0] || null, transient: !!opts.transient, preview: false };
     if (needs) {
       S.wallPending = target.wall;
       loadBundle(target, token, function (bundle) {
@@ -1996,10 +2224,17 @@
         loadedBundle = bundle; imageDone = true; complete();
       });
     }
-    if (needsFont) ensureFont(target.font, function (ok, reason) {
-      if (!ok) { fail('font', reason); return; }
-      fontDone = true; complete();
-    });
+    // Load every font the target areas need, one after another; the first failure stops the change.
+    (function loadNext(i) {
+      if (!needsFont || failed || token !== wallToken) return;
+      if (i >= fontsNeeded.length) { fontDone = true; complete(); return; }
+      if (S.pending) S.pending.font = fontsNeeded[i];
+      ensureFont(fontsNeeded[i], function (ok, reason) {
+        if (!ok) { failedFont = fontsNeeded[i]; fail('font', reason); return; }
+        delete S.fontFallback[fontsNeeded[i]];
+        loadNext(i + 1);
+      });
+    }(0));
     render();
   }
   function showWall(id, done) {
@@ -2142,10 +2377,10 @@
   var NAV = { left: 'left', right: 'right', up: 'up', down: 'down', ok: 'ok', enter: 'ok', back: 'back', escape: 'back' };
   QA.state = function () {
     var out = serialise(S.c), t = top(), item = t.id === 'appearance' ? detailLocation(t).item : null;
-    out.committed = S.c; out.shown = S.shown; out.pending = S.pending; out.view = t.id; out.selected = S.sel;
+    out.committed = S.c; out.shown = S.shown; out.fontFallback = Object.keys(S.fontFallback); out.pending = S.pending; out.view = t.id; out.selected = S.sel;
     out.focusAction = focusedAction(); out.writes = S.writes; out.failedWrites = S.failed; out.error = S.err;
     out.catalog = { loading: catalog.loading, loaded: catalog.loaded, error: catalog.error, ids: ALPHA.slice() };
-    out.fonts = { available: LOOK_VALUES.font.slice(), loaded: Object.keys(fontMetrics).filter(function (id) { return !fontMetrics[id].fallback; }), baselineFallback: !!(fontMetrics.manrope && fontMetrics.manrope.fallback), error: S.lookError && S.lookError.type === 'font' ? S.lookError : null };
+    out.fonts = { available: LOOK_VALUES.tfClock.slice(), loaded: Object.keys(fontMetrics).filter(function (id) { return !fontMetrics[id].fallback; }), baselineFallback: !!(fontMetrics.manrope && fontMetrics.manrope.fallback), error: S.lookError && S.lookError.type === 'font' ? S.lookError : null };
     out.rotation = { activeMs: activeMs + (activeSince ? Date.now() - activeSince : 0), active: !!activeSince };
     out.draft = t.lifted ? { id: t.lifted.id, order: t.lifted.order.slice() } : null;
     out.settingsGroup = t.id === 'wallpaper' ? 'wallpaper' : t.id === 'appearance' ? t.group : null;
@@ -2162,7 +2397,7 @@
     Array.prototype.forEach.call(active, function (el) { if (renderedAction(el)) { count++; if (el.getAttribute('data-action') === action) name = el.getAttribute('aria-label') || el.textContent.replace(/\s+/g, ' ').trim(); } });
     return { view: top().id, settingsGroup: top().id === 'wallpaper' ? 'wallpaper' : top().id === 'appearance' ? top().group : null, focus: name, focusAction: action, focusCount: count, wallpaper: S.wallShown, zone: top().f.zone || null };
   };
-  QA.ready = function () { return fontsReady && !S.pending && !!S.shown && S.shown.bg === S.c.bg && S.shown.wall === S.c.wall && S.shown.font === S.c.font; };
+  QA.ready = function () { var d = displayLook(S.c); return fontsReady && !S.pending && !!S.shown && S.shown.bg === S.c.bg && S.shown.wall === S.c.wall && TYPE_AREAS.every(function (a) { return S.shown[a.font] === d[a.font] && S.shown[a.size] === d[a.size]; }); };
   QA.nav = function () { var keys = arguments.length === 1 && Array.isArray(arguments[0]) ? arguments[0] : Array.prototype.slice.call(arguments); keys.forEach(function (key) { if (!NAV[key]) throw new Error('Unknown key'); press(NAV[key]); }); return QA.state(); };
   QA.look = function (patch) { setLook(patch, {}); return QA.state(); };
   QA.scene = function (name) { if (['home', 'apps', 'settings', 'appearance', 'editor'].indexOf(name) < 0) throw new Error('Unknown view'); goScene(name); return QA.state(); };

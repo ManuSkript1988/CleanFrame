@@ -9,6 +9,13 @@ const IDS = ['IkWsFHtOY9.Stremio', 'org.tizen.netflix-app', 'MCmYXNxgcu.DisneyPl
 const NAMES = ['Stremio', 'Netflix', 'Disney+', 'YouTube', 'Apple TV', 'Prime Video', 'ABC iview', 'SBS On Demand', 'Apple Music'];
 const EXTRA = 'AbCdEf1234.FamilyApp', SPOTIFY = 'rJeHak5zRg.Spotify';
 const UTILITY_ACTIONS = ['util.art', 'util.apps', 'util.sound', 'util.settings'], UTILITY_COUNT = UTILITY_ACTIONS.length;
+// The four independent text areas: font and size axes and their allowed sizes (percent).
+const TYPE_AREAS = [
+  { id: 'clock', font: 'tfClock', size: 'tsClock', sizes: [80, 90, 100, 110, 120, 130, 140, 150, 160] },
+  { id: 'names', font: 'tfNames', size: 'tsNames', sizes: [80, 90, 100, 110, 120] },
+  { id: 'menu', font: 'tfMenu', size: 'tsMenu', sizes: [80, 90, 100, 110, 120] },
+  { id: 'text', font: 'tfText', size: 'tsText', sizes: [80, 90, 100, 110, 120, 130] }
+];
 const UNSAFE_NAME = 'Family <img src=x onerror="window.__catalogXss=1"> & TV';
 const CATALOG = IDS.map((id, i) => ({ id, name: NAMES[i], show: true, iconPath: '' })).concat([
   { id: EXTRA, name: UNSAFE_NAME, show: true, iconPath: '' },
@@ -114,12 +121,14 @@ async function act(action) { const result = await call('activate', action); if (
 async function scene(name) { await call('scene', name); await current.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); }
 async function look(patch) { await call('look', patch); await ready(); }
 async function group(name) {
-  await scene('settings'); await act('settings.group.' + name);
+  // A text area (type-clock, type-names, type-menu, type-text) opens from Settings → Schriften.
+  if (name.startsWith('type-')) { await scene('settings'); await act('settings.group.typography'); await act('type.area.' + name.slice(5)); }
+  else { await scene('settings'); await act('settings.group.' + name); }
   await current.waitForFunction(expected => ShoreQA.state().settingsGroup === expected, name);
 }
 const settingsSnapshot = () => current.evaluate(() => {
   const s = ShoreQA.state();
-  const rendered = [...document.getElementById('stage').classList].filter(c => /^(bg|l|a|u|f|m|font)-/.test(c)).sort();
+  const rendered = [...document.getElementById('stage').classList].filter(c => /^(bg|l|a|u|f|m|type)-/.test(c)).sort();
   return { stored: localStorage.getItem('cleanframe.home.v1'), committed: s.committed, shown: s.shown, rendered, writes: s.writes, storageAttempts: window.__storageAttempts };
 });
 const choice = (axis, value) => act('choice.' + axis + '.' + value);
@@ -228,7 +237,8 @@ try {
   });
   await run('Startup fallbacks remain usable', async () => {
     await page({ noFontAPI: true });
-    check('Missing font-loading API has usable baseline Home', (await state()).look.font === 'manrope' && (await call('where')).focusCount === 1);
+    const noApi = await state();
+    check('Missing font-loading API has usable baseline Home', TYPE_AREAS.every(a => noApi.look[a.font] === 'manrope' && noApi.shown[a.font] === 'manrope') && (await call('where')).focusCount === 1);
     await closePage();
     await page({ seed: baseline({ mode: 'open' }), storageFailure: true });
     check('Failed open-mode write retains prior photo', (await state()).wallpaper === walls[0].id && (await stored()).wallpaper === walls[0].id);
@@ -329,7 +339,7 @@ try {
     for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 });
       for (const layout of ['dock', 'list']) for (const controls of ['icons', 'both', 'text']) {
-        await look({ bg: 'photo', layout, controls, focus: 'glass', font: 'manrope' }); await scene('home');
+        await look({ bg: 'photo', layout, controls, focus: 'glass', tfMenu: 'manrope', tsMenu: 100 }); await scene('home');
         if ((await call('where')).zone === 'util') await nav('back');
         await nav(layout === 'dock' ? 'up' : 'right');
         await nav(...Array(UTILITY_COUNT).fill(layout === 'dock' ? 'left' : 'up'));
@@ -766,6 +776,317 @@ try {
       check('Remote keys still drive the preview after using the panel', await current.evaluate(() => document.activeElement && document.activeElement.id === 'stage'));
     } finally { await closePage(); await mockPreview.close(); }
   });
+  await run('Date below the clock', async () => {
+    for (const [time, date] of [['2026-01-05T09:07:00', '05.01.2026'], ['2026-11-18T13:51:00', '18.11.2026'], ['2026-12-31T23:59:00', '31.12.2026']]) {
+      await page({}, p => p.clock.setFixedTime(new Date(time)));
+      for (const layout of ['dock', 'list']) {
+        await look({ layout }); await scene('home');
+        const c = await current.evaluate(() => {
+          const clock = document.querySelector('#caption .clock'), d = document.querySelector('#caption .clock-date');
+          const a = clock.getBoundingClientRect(), b = d ? d.getBoundingClientRect() : null;
+          return { date: d && d.textContent, next: clock.nextElementSibling === d, below: b && b.top >= a.bottom - 1, smaller: d && parseFloat(getComputedStyle(d).fontSize) < parseFloat(getComputedStyle(clock).fontSize), aligned: b && Math.abs((a.left + a.right) / 2 - (b.left + b.right) / 2) < 1.5, side: (() => { const cap = document.getElementById('caption').getBoundingClientRect(), blk = clock.parentNode.getBoundingClientRect(); return document.getElementById('stage').classList.contains('l-list') ? Math.abs(blk.right - cap.right) < 2 : Math.abs(blk.left - cap.left) < 2; })(), within: b && b.left >= a.left - .5 && b.right <= a.right + .5 };
+        });
+        check(layout + ' shows ' + date + ' centred directly below the clock, smaller', c.date === date && c.next && c.below && c.smaller && c.aligned && c.side, c);
+        check(layout + ' keeps ' + date + ' within the width of the time', c.within, c);
+      }
+      await closePage();
+    }
+    await page({}, p => p.clock.setFixedTime(new Date('2026-11-18T23:59:59')));
+    check('Date before midnight', (await current.locator('#caption .clock-date').textContent()) === '18.11.2026');
+    await current.clock.setFixedTime(new Date('2026-11-19T00:00:00'));
+    await current.waitForFunction(() => document.querySelector('#caption .clock-date').textContent === '19.11.2026', null, { timeout: 4000 });
+    check('Date updates itself at midnight with the clock', (await current.locator('#caption .clock').textContent()).trim() === '00:00');
+  });
+  await run('Navigation does no date measurement or unchanged size writes', async () => {
+    await page({ seed: baseline({ look: { bg: 'photo', layout: 'list', apps: 'both', controls: 'both', focus: 'glass', material: 'soft' } }) }); await scene('home');
+    // Count layout reads on the clock (fitDate) and --ph-size writes on the List rows.
+    await current.evaluate(() => {
+      window.__clockReads = 0; window.__phSizeWrites = 0;
+      const rects = Element.prototype.getClientRects, set = CSSStyleDeclaration.prototype.setProperty;
+      Element.prototype.getClientRects = function () { if (this.classList && this.classList.contains('clock')) window.__clockReads++; return rects.call(this); };
+      CSSStyleDeclaration.prototype.setProperty = function (name) { if (name === '--ph-size') window.__phSizeWrites++; return set.apply(this, arguments); };
+    });
+    await nav('down', 'down', 'down', 'up', 'up', 'up');
+    const counts = () => current.evaluate(() => ({ reads: window.__clockReads, writes: window.__phSizeWrites }));
+    check('List navigation reads no clock layout and writes no unchanged --ph-size', same(await counts(), { reads: 0, writes: 0 }), await counts());
+    await look({ tsClock: 120 }); await scene('home');
+    check('A clock size change measures the date again', (await counts()).reads > 0, await counts());
+    const before = await counts();
+    await look({ tsNames: 110 }); await scene('home');
+    check('A names size change writes the new --ph-size', (await counts()).writes > before.writes, await counts());
+  });
+  // Representative computed text of each area, read on Settings with Home beneath it.
+  const typeProbe = () => current.evaluate(() => {
+    const read = sel => { const e = document.querySelector(sel); if (!e) return null; const s = getComputedStyle(e); return { family: s.fontFamily, size: parseFloat(s.fontSize) }; };
+    return { clock: read('#caption .clock'), date: read('#caption .clock-date'), names: read('#home .tile .label'), menu: read('.settings-group-name'), utility: read('#utils .u-label'), text: read('.settings-group-value'), hint: read('.settings-overview-hint') };
+  });
+  const FAMILY = { orbitron: /Orbitron/, roboto: /Roboto/, manrope: /^"?Manrope/ };
+  const dateFit = () => current.evaluate(() => parseFloat(getComputedStyle(document.getElementById('caption')).getPropertyValue('--date-fit')) || 1);
+  await run('Typography areas are independent', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 4) }) }); await scene('home'); await scene('settings');
+    const base = await typeProbe();
+    check('Standard uses Manrope in all areas', Object.values(base).every(v => v && FAMILY.manrope.test(v.family)), base);
+    const fields = { clock: ['clock', 'date'], names: ['names'], menu: ['menu', 'utility'], text: ['text', 'hint'] };
+    for (const area of TYPE_AREAS) {
+      const max = area.sizes[area.sizes.length - 1];
+      // Home is redrawn only while visible, so show it before reading it beneath Settings.
+      await look({ [area.font]: 'orbitron', [area.size]: max }); await scene('home'); await scene('settings');
+      const p = await typeProbe();
+      for (const [owner, keys] of Object.entries(fields)) for (const key of keys) {
+        // The date is fitted to the width of the time, so its size is the designed 26px times the
+        // area size times the fit factor that the app applied (1 when the date already fits).
+        const expected = key === 'date' ? 26 * max / 100 * await dateFit() : base[key].size * max / 100;
+        if (owner === area.id) check(area.id + ' changes ' + key + ' to Orbitron at ' + max + ' %', FAMILY.orbitron.test(p[key].family) && Math.abs(p[key].size - expected) < 1.5, { base: base[key], now: p[key], expected });
+        else check(area.id + ' leaves ' + key + ' unchanged', same(p[key], base[key]), { base: base[key], now: p[key] });
+      }
+      await look({ [area.font]: 'manrope', [area.size]: 100 });
+    }
+    await look({ tfClock: 'roboto', tsClock: 120, tfNames: 'orbitron', tsNames: 90, tfMenu: 'roboto', tsMenu: 110, tfText: 'orbitron', tsText: 130 });
+    const set = (await state()).look;
+    await current.reload(); await ready(); await scene('home'); await scene('settings');
+    const after = await state(), p = await typeProbe(), savedLook = (await stored()).look;
+    check('All four areas survive a reload', TYPE_AREAS.every(a => after.look[a.font] === set[a.font] && after.look[a.size] === set[a.size] && savedLook[a.font] === set[a.font] && savedLook[a.size] === set[a.size]), after.look);
+    check('Reloaded areas render their fonts', FAMILY.roboto.test(p.clock.family) && FAMILY.orbitron.test(p.names.family) && FAMILY.roboto.test(p.menu.family) && FAMILY.orbitron.test(p.text.family), p);
+    check('Other preferences are untouched by typography changes', same(after.dock, PRIMARY.slice(0, 4)) && after.look.layout === 'dock' && after.look.bg === 'photo');
+  });
+  await run('Typography migration and font list', async () => {
+    const legacy = baseline({ dock: ['youtube', 'netflix'], lastApp: 'youtube', mode: '15', look: { bg: 'dark', layout: 'list', apps: 'text', font: 'geist', controls: 'icons', focus: 'type', material: 'frost' }, inputs: [{ id: 'hdmi-keep01', port: 1, name: 'Konsole', image: 'input-controller' }] });
+    legacy.dock.push('hdmi-keep01');
+    await page({ seed: legacy });
+    const s = await state();
+    check('Earlier Home font carries over to clock and names', s.look.tfClock === 'geist' && s.look.tfNames === 'geist' && s.look.tfMenu === 'manrope' && s.look.tfText === 'manrope' && TYPE_AREAS.every(a => s.look[a.size] === 100), s.look);
+    check('Earlier preferences survive the typography upgrade', s.look.bg === 'dark' && s.look.layout === 'list' && s.look.apps === 'text' && s.look.controls === 'icons' && s.look.focus === 'type' && s.look.material === 'frost' && s.mode === '15' && same(s.dock, ['youtube', 'netflix', 'hdmi-keep01']) && s.inputs.length === 1, s);
+    await group('type-clock');
+    check('An area keeps its earlier font in the list', same((await radios()).map(r => r.action), ['choice.tfClock.manrope', 'choice.tfClock.orbitron', 'choice.tfClock.roboto', 'choice.tfClock.geist']));
+    await group('type-menu');
+    check('Other areas offer Standard, Orbitron and Roboto', same((await radios()).map(r => r.action), ['choice.tfMenu.manrope', 'choice.tfMenu.orbitron', 'choice.tfMenu.roboto']));
+    check('Each font choice is shown in its own typeface', await current.evaluate(() => ['orbitron', 'roboto'].every(id => /Orbitron|Roboto/.test(getComputedStyle(document.querySelector('[data-action="choice.tfMenu.' + id + '"] .setting-name')).fontFamily))));
+  });
+  await run('A saved font that cannot load is never overwritten', async () => {
+    // Orbitron is saved for clock and names but its file is unavailable at startup.
+    const savedLook = { bg: 'photo', layout: 'dock', apps: 'both', controls: 'both', focus: 'glass', material: 'soft', tfClock: 'orbitron', tfNames: 'orbitron', tfMenu: 'roboto', tfText: 'manrope', tsClock: 120, tsNames: 100, tsMenu: 110, tsText: 100 };
+    const blockOrbitron = p => { p.__expectedFailures.push('Orbitron-Variable.ttf'); return p.route('**/Orbitron-Variable.ttf', route => route.abort('failed')); };
+    const keepsOrbitron = async () => { const l = (await stored()).look, s = await state(); return l.tfClock === 'orbitron' && l.tfNames === 'orbitron' && l.tfMenu === 'roboto' && l.tsClock === 120 && l.tsMenu === 110 && s.look.tfClock === 'orbitron' && s.look.tfNames === 'orbitron'; };
+    await page({ seed: baseline({ look: savedLook }) }, blockOrbitron);
+    let s = await state();
+    check('Startup shows Standard only where Orbitron failed', s.shown.tfClock === 'manrope' && s.shown.tfNames === 'manrope' && s.shown.tfMenu === 'roboto' && s.fontFallback.includes('orbitron'), { shown: s.shown, fallback: s.fontFallback });
+    check('The clock is drawn in Standard meanwhile', /^"?Manrope/.test(await current.evaluate(() => getComputedStyle(document.querySelector('#caption .clock')).fontFamily)));
+    check('Startup keeps Orbitron saved', await keepsOrbitron(), (await stored()).look);
+    await editor(); const start = (await state()).dock;
+    await act('editor.move.netflix'); await nav('down', 'ok');
+    const moved = start.slice(); [moved[1], moved[2]] = [moved[2], moved[1]];
+    check('Moving an app keeps Orbitron saved', same((await stored()).dock, moved) && await keepsOrbitron(), (await stored()).look);
+    await look({ wall: walls[1].id });
+    check('Changing the wallpaper keeps Orbitron saved and shown as Standard', (await stored()).wallpaper === walls[1].id && await keepsOrbitron() && (await state()).shown.tfClock === 'manrope', (await stored()).look);
+    await look({ layout: 'list', tsText: 110 });
+    check('Layout and other size changes keep Orbitron saved', (await stored()).look.layout === 'list' && (await stored()).look.tsText === 110 && await keepsOrbitron(), (await stored()).look);
+    await group('type-clock');
+    check('The area says Orbitron is saved but shown as Standard', /Orbitron konnte nicht geladen werden/.test(await current.locator('#appearanceStatus').innerText()) && (await radios()).find(r => r.action === 'choice.tfClock.orbitron').checked === 'true',await current.locator('#appearanceStatus').innerText());
+    await current.reload(); await ready();
+    check('A reload with the file still missing keeps Orbitron saved', await keepsOrbitron() && (await state()).shown.tfClock === 'manrope');
+    await current.unroute('**/Orbitron-Variable.ttf');
+    await group('type-clock'); await act('choice.tfClock.orbitron'); await ready();
+    s = await state();
+    check('OK on Orbitron loads it again for every area that uses it', s.shown.tfClock === 'orbitron' && s.shown.tfNames === 'orbitron' && !s.fontFallback.length && await keepsOrbitron(), { shown: s.shown, fallback: s.fontFallback });
+    check('The recovered font is drawn', /Orbitron/.test(await current.evaluate(() => getComputedStyle(document.querySelector('#caption .clock')).fontFamily)));
+  });
+  await run('Saved private fonts missing from this build stay saved', async () => {
+    // Pangram, Mori and Montreal are private faces. In a public-font build they are known IDs
+    // without files: shown as Standard, never replaced in the preferences or the copy.
+    const COPY = 'cleanframe.typography.v1', PRIVATE = ['montreal', 'mori', 'pangram'];
+    const savedLook = { bg: 'dark', layout: 'list', apps: 'text', controls: 'text', focus: 'type', material: 'soft', tfClock: 'pangram', tfNames: 'mori', tfMenu: 'montreal', tfText: 'roboto', tsClock: 120, tsNames: 100, tsMenu: 110, tsText: 100 };
+    await page({ seed: baseline({ look: savedLook }) });
+    const catalog = await current.evaluate(() => window.CleanFramePrivateFontIDs || []);
+    if (PRIVATE.some(id => catalog.includes(id))) { check('Skipped: this run includes private fonts; run with CLEANFRAME_PUBLIC_FONTS=1', true); return; }
+    const keeps = async () => {
+      const l = (await stored()).look, c = await current.evaluate(key => JSON.parse(localStorage.getItem(key)), COPY), s = await state();
+      return l.tfClock === 'pangram' && l.tfNames === 'mori' && l.tfMenu === 'montreal' && l.tsClock === 120 && l.tsMenu === 110 && l.font === 'mori'
+        && c.tfClock === 'pangram' && c.tfNames === 'mori' && c.tfMenu === 'montreal' && c.font === 'mori' && s.look.tfClock === 'pangram';
+    };
+    let s = await state();
+    check('Missing private fonts are shown as Standard', s.shown.tfClock === 'manrope' && s.shown.tfNames === 'manrope' && s.shown.tfMenu === 'manrope' && s.shown.tfText === 'roboto' && same(s.fontFallback.slice().sort(), PRIVATE), { shown: s.shown, fallback: s.fontFallback });
+    check('Startup keeps the private fonts in the preferences and the copy', await keeps(), { look: (await stored()).look });
+    await editor(); const start = (await state()).dock;
+    await act('editor.move.netflix'); await nav('down', 'ok');
+    const moved = start.slice(); [moved[1], moved[2]] = [moved[2], moved[1]];
+    check('Moving an app keeps the private fonts', same((await stored()).dock, moved) && await keeps());
+    await look({ layout: 'dock', tsText: 110 });
+    check('Layout and size changes keep the private fonts', (await stored()).look.layout === 'dock' && await keeps());
+    await current.reload(); await ready();
+    check('A reload keeps the private fonts', await keeps() && (await state()).shown.tfClock === 'manrope');
+    await group('type-clock');
+    const pangram = (await radios()).find(r => r.action === 'choice.tfClock.pangram');
+    check('The area lists the saved private font as applied but not selectable', !!pangram && pangram.checked === 'true' && pangram.disabled, pangram);
+    const status = await current.locator('#appearanceStatus').innerText();
+    check('The area says the font is not included in this version', /Pangram Sans ist in dieser Version nicht enthalten/.test(status), status);
+    await act('choice.tfClock.roboto'); await ready();
+    const after = (await stored()).look;
+    check('Choosing another font replaces only that area deliberately', after.tfClock === 'roboto' && after.tfNames === 'mori' && after.tfMenu === 'montreal' && (await state()).shown.tfClock === 'roboto', after);
+    await closePage();
+    await page({ seed: baseline({ look: { bg: 'dark', layout: 'list', apps: 'text', controls: 'text', focus: 'type', material: 'soft', font: 'Mori' } }) });
+    s = await state();
+    check('A missing private Home font migrates to clock and names and stays saved', s.look.tfClock === 'mori' && s.look.tfNames === 'mori' && s.look.tfMenu === 'manrope' && s.shown.tfClock === 'manrope' && (await stored()).look.tfClock === 'mori', s.look);
+    await closePage();
+    await page({ seed: baseline({ look: { bg: 'dark', layout: 'list', apps: 'text', controls: 'text', focus: 'type', material: 'soft', tfClock: 'comic', tfNames: 'constructor', tfMenu: 42, tsClock: 999, tsNames: '110' } }) });
+    s = await state();
+    check('Unknown or invalid font IDs and sizes fall back safely', s.look.tfClock === 'manrope' && s.look.tfNames === 'manrope' && s.look.tfMenu === 'manrope' && s.look.tsClock === 100 && s.look.tsNames === 100 && !s.fontFallback.length, s.look);
+  });
+  await run('Typography survives a return to an earlier version', async () => {
+    const COPY = 'cleanframe.typography.v1';
+    const copy = () => current.evaluate(key => JSON.parse(localStorage.getItem(key)), COPY);
+    // What de05deb does at its first start: it keeps look.font and every key it knows, and
+    // drops the four areas from look and from the top level. Optionally its font is changed.
+    const earlierVersion = (font) => current.evaluate(([key, f]) => {
+      const s = JSON.parse(localStorage.getItem(key));
+      for (const k of ['tfClock', 'tfNames', 'tfMenu', 'tfText', 'tsClock', 'tsNames', 'tsMenu', 'tsText']) { delete s[k]; delete s.look[k]; }
+      if (f) s.look.font = f;
+      localStorage.setItem(key, JSON.stringify(s));
+    }, [KEY, font || null]);
+    const areas = l => TYPE_AREAS.map(a => l[a.font] + ':' + l[a.size]).join(',');
+    await page();
+    const chosen = { tfClock: 'roboto', tsClock: 140, tfNames: 'geist', tsNames: 110, tfMenu: 'orbitron', tsMenu: 120, tfText: 'roboto', tsText: 130 };
+    await look(chosen);
+    check('look.font follows the names area for an earlier version', (await stored()).look.font === 'geist');
+    check('The separate copy holds all four areas and sizes', areas(await copy()) === areas(chosen) && (await copy()).font === 'geist', await copy());
+    await look({ tfNames: 'orbitron' });
+    check('Orbitron is written to an earlier version as Standard', (await stored()).look.font === 'manrope' && (await copy()).font === 'manrope');
+    await look({ tfNames: 'geist' });
+    await earlierVersion(); await current.reload(); await ready();
+    check('After an unchanged earlier version all areas and sizes return', areas((await state()).look) === areas(chosen) && areas((await stored()).look) === areas(chosen), (await state()).look);
+    check('Other preferences survive the round trip', same((await state()).dock, PRIMARY) && (await state()).look.layout === 'dock');
+    await look({ tfNames: 'orbitron' });
+    await earlierVersion(); await current.reload(); await ready();
+    check('Orbitron names return after an earlier version kept Standard', (await state()).look.tfNames === 'orbitron' && areas((await state()).look) === areas({ ...chosen, tfNames: 'orbitron' }), (await state()).look);
+    await earlierVersion('newsreader'); await current.reload(); await ready();
+    const changed = (await state()).look;
+    check('A font changed in the earlier version wins over the copy', changed.tfClock === 'newsreader' && changed.tfNames === 'newsreader' && changed.tfMenu === 'manrope' && changed.tfText === 'manrope' && TYPE_AREAS.every(a => changed[a.size] === 100), changed);
+    check('The copy then follows the new choice', areas(await copy()) === areas(changed) && (await copy()).font === 'newsreader');
+  });
+  await run('Typography remote operation and live preview', async () => {
+    await page(); await scene('settings');
+    await nav('down', 'down'); check('Remote reaches Schriften', (await state()).focusAction === 'settings.group.typography');
+    await nav('ok'); check('OK opens the four areas', same((await call('actions')).filter(a => a.startsWith('type.area.')), ['type.area.clock', 'type.area.names', 'type.area.menu', 'type.area.text']));
+    await nav('down', 'down', 'ok'); check('Remote opens the menu area', (await state()).settingsGroup === 'type-menu' && (await state()).focusAction === 'choice.tfMenu.manrope');
+    const before = await settingsSnapshot(); await nav('down');
+    check('Focus alone does not apply a font', same(await settingsSnapshot(), before));
+    await nav('ok'); await ready();
+    check('OK applies Orbitron immediately, in Settings too', (await state()).look.tfMenu === 'orbitron' && /Orbitron/.test(await current.evaluate(() => getComputedStyle(document.querySelector('.settings-title')).fontFamily)) && (await state()).view === 'appearance');
+    await nav('down', 'down'); check('Remote reaches the size slider', (await state()).focusAction === 'type.size.menu');
+    await nav('right'); check('Right raises the size by one step and saves it', (await state()).look.tsMenu === 110 && (await stored()).look.tsMenu === 110);
+    check('Slider reports its value', (await current.locator('[data-action="type.size.menu"]').getAttribute('aria-valuenow')) === '110' && (await current.locator('[data-action="type.size.menu"]').innerText()).includes('110 %'));
+    await nav('right', 'right', 'right'); check('The size stops at its maximum', (await state()).look.tsMenu === 120);
+    await nav('left', 'left', 'left', 'left', 'left', 'left'); check('The size stops at its minimum', (await state()).look.tsMenu === 80);
+    await act('type.size.menu'); check('OK on the slider changes nothing', (await state()).look.tsMenu === 80);
+    await current.locator('[data-action="type.size.menu"] [data-i="1"]').click(); check('Pointer arrows step the slider', (await state()).look.tsMenu === 90);
+    check('The preview shows real menu text in the area font', /Einstellungen/.test(await current.locator('.type-sample-menu').innerText()) && /Orbitron/.test(await current.evaluate(() => getComputedStyle(document.querySelector('.type-sample-menu .type-sample-row span')).fontFamily)));
+    await nav('back'); check('Back returns to the area list with the description updated', (await state()).focusAction === 'type.area.menu' && (await current.locator('[data-action="type.area.menu"]').innerText()).includes('Orbitron · 90 %'));
+    await nav('back'); check('Back returns to Settings on Schriften', (await state()).focusAction === 'settings.group.typography' && /Orbitron/.test(await current.locator('[data-action="settings.group.typography"]').innerText()));
+    await group('type-clock'); await act('choice.tfClock.roboto'); await ready();
+    check('Clock preview shows the real time and date', await current.evaluate(() => { const t = document.querySelector('.type-sample-clock'); return /\d\d:\d\d/.test(t.innerText) && /\d\d\.\d\d\.\d{4}/.test(t.innerText) && /Roboto/.test(getComputedStyle(t.querySelector('.clock-sample')).fontFamily); }));
+    check('The Home preview behind Settings uses the new clock font', /Roboto/.test(await current.evaluate(() => getComputedStyle(document.querySelector('#caption .clock')).fontFamily)));
+  });
+  // Vertical offset (stage px) between each icon and the optical centre of its text, the
+  // midpoint of the capital and lowercase centres, measured with the face's own metrics.
+  const iconTextOffsets = () => current.evaluate(() => {
+    const scale = document.getElementById('stage').getBoundingClientRect().width / 1920, out = [];
+    const optical = el => {
+      const s = getComputedStyle(el), probe = document.createElement('span');
+      probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+      el.appendChild(probe); const base = probe.getBoundingClientRect().top; probe.remove();
+      const c = document.createElement('canvas').getContext('2d'); c.font = s.fontWeight + ' ' + s.fontSize + ' ' + s.fontFamily;
+      return base - (c.measureText('H').actualBoundingBoxAscent + c.measureText('x').actualBoundingBoxAscent) * scale / 4;
+    };
+    const centre = el => {
+      const ink = el.querySelector('.mk') || el, r = ink.getBoundingClientRect(), mark = el.closest('.mark') || el.querySelector('.mark'), m = mark && window.FrameIconMetrics[mark.getAttribute('data-mark')];
+      return m && ink.classList.contains('mk') ? r.top + (m.y + m.h / 2) * r.height / m.n : r.top + r.height / 2;
+    };
+    for (const [label, row, icon, text] of [['list', '.ph-row', '.mark', '.ph-name'], ['control', '#utils .u', '.ico', '.u-label'], ['editor', '.er-name, .eo', '.mark', '.er-text, .eo-text'],
+      ['setting', '.setting-choice:not(.setting-image)', '.setting-mark', '.setting-name'], ['back', '.setting-back', '.ico', 'span'], ['hint', '.appearance-desc, .settings-overview-hint', '.remote-key', 'span:not(.remote-key)']]) {
+      [...document.querySelectorAll(row)].filter(r => r.getClientRects().length && getComputedStyle(r).visibility !== 'hidden' && r.querySelector(icon) && r.querySelector(text) && r.querySelector(text).textContent.trim()).slice(0, 2)
+        .forEach(r => out.push({ label, text: r.querySelector(text).textContent.trim().slice(0, 20), offset: Math.round((optical(r.querySelector(text)) - centre(r.querySelector(icon))) / scale * 10) / 10 }));
+    }
+    return out;
+  });
+  await run('Icons keep the designed Manrope alignment in every font', async () => {
+    // The designed positions are Manrope's (check-typography-reference.mjs keeps them identical
+    // to the reference commit). Another font may move an icon only with its own optical centre,
+    // so each icon's offset from its text stays within 2px of the Manrope offset.
+    let designed = null;
+    for (const font of ['manrope', 'orbitron', 'roboto']) {
+      await page({ seed: baseline({ dock: PRIMARY.slice(0, 2).concat(SHORTCUT.id), inputs: [SHORTCUT] }) });
+      await look({ tfNames: font, tfMenu: font, tfText: font, layout: 'list', apps: 'both', controls: 'both' }); await scene('home');
+      const tag = view => list => list.map(s => ({ ...s, view }));
+      const seen = tag('list')(await iconTextOffsets());
+      await look({ layout: 'dock' }); await scene('home'); seen.push(...tag('dock')(await iconTextOffsets()));
+      await scene('editor'); seen.push(...tag('editor')(await iconTextOffsets()));
+      await scene('settings'); seen.push(...tag('settings')(await iconTextOffsets()));
+      // The Home preview beside a settings detail is scaled down; measure only the settings there.
+      await group('hdmi'); seen.push(...tag('hdmi')(await iconTextOffsets()).filter(s => ['setting', 'back', 'hint'].includes(s.label)));
+      for (const label of ['list', 'control', 'editor', 'setting', 'back', 'hint']) check(font + ' ' + label + ' icons are measured', seen.some(s => s.label === label), seen);
+      if (!designed) designed = seen;
+      else {
+        const pairs = seen.map(s => ({ ...s, manrope: designed.find(d => d.view === s.view && d.label === s.label && d.text === s.text) }));
+        check(font + ' icons match the Manrope design positions', pairs.every(p => p.manrope), pairs.filter(p => !p.manrope));
+        check(font + ' icons stay within 2px of the Manrope alignment', pairs.every(p => p.manrope && Math.abs(p.offset - p.manrope.offset) <= 2), pairs.filter(p => !p.manrope || Math.abs(p.offset - p.manrope.offset) > 2));
+      }
+      await closePage();
+    }
+  });
+  await run('Orbitron and Roboto render German characters', async () => {
+    await page(); await look({ tfMenu: 'orbitron', tfText: 'roboto' });
+    const glyphs = await current.evaluate(async () => {
+      const out = {};
+      for (const family of ['Study Orbitron', 'Study Roboto']) {
+        await document.fonts.load('400 40px "' + family + '"', 'ÄÖÜäöüß');
+        const c = document.createElement('canvas').getContext('2d'), missing = [];
+        for (const ch of 'ÄÖÜäöüß') {
+          c.font = '40px "' + family + '", monospace'; const a = c.measureText(ch).width;
+          c.font = '40px "' + family + '", serif'; const b = c.measureText(ch).width;
+          if (Math.abs(a - b) > .01) missing.push(ch);
+        }
+        out[family] = { loaded: document.fonts.check('40px "' + family + '"', 'ÄÖÜäöüß'), missing };
+      }
+      return out;
+    });
+    check('Orbitron and Roboto contain Ä Ö Ü ä ö ü ß', Object.values(glyphs).every(g => g.loaded && !g.missing.length), glyphs);
+    const resources = await current.evaluate(() => performance.getEntriesByType('resource').map(r => r.name).filter(u => /orbitron|roboto/i.test(u)));
+    check('Fonts load from the bundled files, not a CDN', resources.length >= 2 && resources.every(u => u.startsWith(preview.baseURL + '/home/assets/fonts/')), resources);
+  });
+  await run('Largest type fits without clipping', async () => {
+    await page({ seed: baseline({ dock: PRIMARY.slice(0, 3).concat(SHORTCUT.id), inputs: [SHORTCUT] }) });
+    await look({ tfClock: 'orbitron', tsClock: 160, tfNames: 'orbitron', tsNames: 120, tfMenu: 'orbitron', tsMenu: 120, tfText: 'orbitron', tsText: 130 });
+    const fits = async label => {
+      const overflow = await chromeOverflow();
+      check(label + ' keeps every label inside its control', !overflow.length, overflow);
+    };
+    const homeOverlap = () => current.evaluate(() => {
+      const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+      const cap = [...document.querySelectorAll('#caption > *')].filter(visible).map(e => e.getBoundingClientRect());
+      const others = [...document.querySelectorAll('#utils .u, #home .tile, #home .ph-row')].filter(visible).map(e => e.getBoundingClientRect());
+      return cap.some(a => others.some(b => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top));
+    });
+    for (const width of [1920, 1280]) {
+      await current.setViewportSize({ width, height: width * 9 / 16 });
+      for (const layout of ['dock', 'list']) for (const apps of ['both', 'text']) {
+        await look({ layout, apps, controls: 'both' }); await scene('home');
+        await fits('Home ' + layout + '/' + apps + ' at ' + width);
+        check('Clock and date do not overlap Home items ' + layout + '/' + apps + ' at ' + width, !(await homeOverlap()));
+        await nav(layout === 'dock' ? 'up' : 'right'); await fits('Home controls ' + layout + ' at ' + width); await nav('back');
+      }
+      await scene('settings'); await fits('Settings overview at ' + width);
+      await nav(...Array(7).fill('down'));
+      check('Settings overview scrolls to its last group at ' + width, (await state()).focusAction === 'settings.group.samsung' && await current.evaluate(() => { const l = document.querySelector('.settings-overview'), f = l.querySelector('.is-focus'); return f.getBoundingClientRect().bottom <= l.getBoundingClientRect().bottom + 1; }));
+      for (const name of ['typography', 'type-clock', 'type-names', 'type-menu', 'type-text', 'layout', 'focus', 'background', 'samsung']) {
+        await group(name); await fits('Settings ' + name + ' at ' + width);
+        await nav(...Array(8).fill('down'));
+        check('Settings ' + name + ' keeps the focused row visible at ' + width, await current.evaluate(() => { const r = document.getElementById('appearanceRows'), f = r.querySelector('.is-focus'); if (!f) return true; const a = r.getBoundingClientRect(), b = f.getBoundingClientRect(); return b.top >= a.top - 1 && b.bottom <= a.bottom + 1; }));
+      }
+      await group('hdmi'); await act('hdmi.edit.' + SHORTCUT.id); await current.waitForSelector('[data-action="hdmi.port.1"]'); await fits('Edit shortcut at ' + width);
+      await act('hdmi.delete'); await fits('Delete dialog at ' + width); await act('message.cancel');
+      await scene('editor'); await fits('Apps on Home at ' + width);
+      await library(); await fits('All apps at ' + width);
+    }
+  });
   await run('Independent app identity self-filter', async () => {
     const appId = 'AbCdEf1234.MyHome';
     await page({ currentAppId: appId, catalog: CATALOG.filter(a => a.id !== 'nClrkHome1.FrameHome').concat({ id: appId, name: 'Family Home', show: true }) });
@@ -856,18 +1177,12 @@ try {
     for (const axis of ['apps', 'controls']) for (const value of ['icons', 'both', 'text']) { await look({ [axis]: value }); check(axis + ' ' + value + ' persists', (await state()).look[axis] === value); }
     await look({ bg: 'photo', layout: 'dock', focus: 'glass', apps: 'both', controls: 'icons' });
     for (const material of ['soft', 'frost', 'tint']) { await look({ material }); check(material + ' matches displayed bundle', (await state()).shown.material === material && (await state()).look.material === material); }
-    const fonts = (await state()).fonts.available; check('Font catalogue includes default', fonts.includes('manrope'));
-    for (const font of fonts) {
-      await look({ font }); check('Font ' + font + ' settles', (await state()).look.font === font && (await state()).shown.font === font);
-      if (font === 'newsreader') {
-        for (const layout of ['list', 'dock']) for (const controls of ['icons', 'both', 'text']) {
-          await look({ layout, controls });
-          const wrong = await current.evaluate(() => [...document.querySelectorAll('.home .clock, .home .u, .home .u-label, .home .ph-name, .home .tile .label, .home .app-focus-name, .home .util-focus-label, .home .wall-keep')].filter(e => !/Newsreader/.test(getComputedStyle(e).fontFamily)).map(e => ({ cls: e.className, font: getComputedStyle(e).fontFamily })));
-          check('Newsreader covers Home text ' + layout + '/' + controls, wrong.length === 0, wrong);
-        }
-      }
+    const fonts = (await state()).fonts.available; check('Font catalogue includes Standard, Orbitron and Roboto', ['manrope', 'orbitron', 'roboto'].every(id => fonts.includes(id)), fonts);
+    for (const area of TYPE_AREAS) for (const font of ['orbitron', 'roboto', 'manrope']) {
+      await look({ [area.font]: font }); const s = await state();
+      check(area.id + ' font ' + font + ' settles', s.look[area.font] === font && s.shown[area.font] === font, s.look);
     }
-    await look({ font: 'manrope' });
+    await look({ tfClock: 'manrope', tfNames: 'manrope', tfMenu: 'manrope', tfText: 'manrope' });
     for (const wall of walls) { await look({ wall: wall.id }); check('Wallpaper ' + wall.id + ' has matching bundle', (await state()).shown.wall === wall.id && (await state()).wallpaper === wall.id); }
     for (const layout of ['list', 'dock']) for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 }); await look({ layout });
@@ -887,7 +1202,6 @@ try {
     const specs = {
       background: { bg: ['dark', 'light', 'photo'] },
       layout: { layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], controls: ['icons', 'both', 'text'] },
-      typography: { font: (await state()).fonts.available },
       focus: { focus: ['type', 'glass'], material: ['soft', 'frost', 'tint'] }
     };
     for (const [name, axes] of Object.entries(specs)) {
@@ -958,7 +1272,10 @@ try {
       ['layout', 'layout', ['list', 'dock']],
       ['layout', 'apps', ['icons', 'text', 'both']],
       ['layout', 'controls', ['text', 'both', 'icons']],
-      ['typography', 'font', (await state()).fonts.available],
+      ['type-clock', 'tfClock', ['orbitron', 'roboto', 'manrope']],
+      ['type-names', 'tfNames', ['roboto', 'orbitron', 'manrope']],
+      ['type-menu', 'tfMenu', ['orbitron', 'roboto', 'manrope']],
+      ['type-text', 'tfText', ['roboto', 'orbitron', 'manrope']],
       ['focus', 'focus', ['type', 'glass']],
       ['focus', 'material', ['frost', 'tint', 'soft']]
     ];
@@ -971,12 +1288,12 @@ try {
         const after = await settingsSnapshot(), rows = await radios();
         const expectedWrites = before.writes + (before.committed[axis] === value ? 0 : 1);
         const untouched = { ...after.committed, [axis]: before.committed[axis] };
-        const prefix = { bg: 'bg', layout: 'l', apps: 'a', controls: 'u', focus: 'f', material: 'm', font: 'font' }[axis];
+        const prefix = { bg: 'bg', layout: 'l', apps: 'a', controls: 'u', focus: 'f', material: 'm', tfClock: 'type-clock', tfNames: 'type-names', tfMenu: 'type-menu', tfText: 'type-text' }[axis];
         const shown = !Object.hasOwn(after.shown, axis) || after.shown[axis] === value;
         check(axis + ' OK applies ' + value + ' once', after.committed[axis] === value && shown && after.rendered.includes(prefix + '-' + value) && same(untouched, before.committed) && expectedWrites === after.writes && after.storageAttempts - before.storageAttempts === expectedWrites - before.writes && rows.some(r => r.action === 'choice.' + axis + '.' + value && r.checked === 'true'), { before, after, rows });
       }
       const applied = await settingsSnapshot(); await nav('back');
-      check(axis + ' applied choice survives Back', same(await settingsSnapshot(), applied) && (await state()).focusAction === 'settings.group.' + name);
+      check(axis + ' applied choice survives Back', same(await settingsSnapshot(), applied) && (await state()).focusAction === (name.startsWith('type-') ? 'type.area.' + name.slice(5) : 'settings.group.' + name));
     }
     await group('background'); await act('background.rotation');
     const selected = await settingsSnapshot(); await act('rotation.' + selected.committed.mode);
@@ -1063,20 +1380,27 @@ try {
     } finally { releaseImages(); await current.unroute(pattern); }
   });
   await run('Settings Back cancels a delayed font choice', async () => {
-    await page(); await group('typography'); const before = await settingsSnapshot();
-    const held = [], pattern = '**/fonts/newsreader/*';
+    // The font list shows each choice in its own face, so hold Orbitron before the list renders.
+    await page();
+    const held = [], pattern = '**/fonts/orbitron/*';
     let releaseFont;
     const blocked = new Promise(resolve => { releaseFont = resolve; });
     await current.route(pattern, async route => { held.push(route.request().url()); await blocked; await route.continue(); });
+    await group('type-menu'); const before = await settingsSnapshot();
     try {
-      await choice('font', 'newsreader'); await current.waitForFunction(() => !!ShoreQA.state().pending);
-      check('Loading a font keeps applied typography and its checked choice', same(await settingsSnapshot(), before) && (await radios()).some(r => r.action === 'choice.font.manrope' && r.checked === 'true'));
+      await choice('tfMenu', 'orbitron'); await current.waitForFunction(() => !!ShoreQA.state().pending);
+      check('Loading a font keeps the applied menu font and its checked choice', same(await settingsSnapshot(), before) && (await radios()).some(r => r.action === 'choice.tfMenu.manrope' && r.checked === 'true'));
+      check('Loading names the font in the status line', /Orbitron wird geladen/.test(await current.locator('#appearanceStatus').innerText()));
+      await nav('down', 'down');
+      const slider = current.locator('[data-action="type.size.menu"]');
+      check('The size slider shows that it waits while the font loads', (await state()).focusAction === 'type.size.menu' && /is-busy/.test(await slider.getAttribute('class')) && (await slider.getAttribute('aria-disabled')) === 'true' && /Schrift wird geladen/.test(await current.locator('#appearanceDesc').innerText()), await current.locator('#appearanceDesc').innerText());
+      await nav('right'); check('A size step during loading changes nothing', (await state()).look.tsMenu === 100 && !!(await state()).pending);
       await nav('back'); await ready();
-      check('Back cancels the font choice and restores Typography focus', same(await settingsSnapshot(), before) && (await state()).focusAction === 'settings.group.typography');
+      check('Back cancels the font choice and restores the area row focus', same(await settingsSnapshot(), before) && (await state()).focusAction === 'type.area.menu');
       releaseFont(); await current.waitForLoadState('networkidle');
       check('Late font completion cannot apply the cancelled choice', held.length > 0 && same(await settingsSnapshot(), before) && !(await state()).pending);
-      await group('typography'); await choice('font', 'newsreader'); await ready();
-      check('Cancelled font remains available for a fresh explicit apply', (await state()).look.font === 'newsreader' && (await state()).shown.font === 'newsreader' && (await state()).writes === before.writes + 1);
+      await group('type-menu'); await choice('tfMenu', 'orbitron'); await ready();
+      check('Cancelled font remains available for a fresh explicit apply', (await state()).look.tfMenu === 'orbitron' && (await state()).shown.tfMenu === 'orbitron' && (await state()).writes === before.writes + 1);
     } finally { releaseFont(); await current.unroute(pattern); }
   });
   await run('Settings choice failure and explicit retry', async () => {
@@ -1101,7 +1425,7 @@ try {
     for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 });
       await current.waitForFunction(w => Math.abs(document.getElementById('stage').getBoundingClientRect().width - w) < 1, width);
-      for (const name of ['background', 'layout', 'typography', 'focus', 'samsung', 'rotation']) {
+      for (const name of ['background', 'layout', 'typography', 'type-clock', 'type-menu', 'focus', 'samsung', 'rotation']) {
         await group(name === 'rotation' ? 'background' : name);
         if (name === 'rotation') await act('background.rotation');
         const geometry = await current.evaluate(() => {

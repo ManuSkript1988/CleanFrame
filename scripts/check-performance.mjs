@@ -107,7 +107,7 @@ try {
   report.startupMs = Date.now() - start;
   const startupResources = await page.evaluate(() => performance.getEntriesByType('resource').map(r => r.name));
   check('No wallpaper gallery thumbnail fetch at startup', !startupResources.some(u => /-thumb\./.test(u)));
-  await look({ bg: 'photo', layout: 'list', apps: 'both', controls: 'icons', focus: 'glass', material: 'soft', font: 'manrope' });
+  await look({ bg: 'photo', layout: 'list', apps: 'both', controls: 'icons', focus: 'glass', material: 'soft', tfClock: 'manrope', tfNames: 'manrope', tfMenu: 'manrope', tfText: 'manrope' });
   await sample('Photo List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
   await look({ layout: 'dock' });
   await sample('Photo Dock navigation', ['right', 'right', 'right', 'left', 'left', 'left']);
@@ -125,11 +125,20 @@ try {
   await call('nav', 'back');
   await scene('appearance');
   await sample('Appearance row navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
-  await scene('home');
-  await look({ font: 'newsreader', layout: 'list', apps: 'text', controls: 'text' });
-  await sample('Newsreader List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
-  await call('nav', 'right');
-  await sample('Newsreader Home controls', ['up', 'up', 'down', 'down']);
+  // Each face is loaded for the first time here: time its load and apply, then sample navigation
+  // drawn in it. Orbitron is a base font; Newsreader remains for areas migrated from it.
+  report.fontLoads = [];
+  for (const [font, label] of [['orbitron', 'Orbitron'], ['newsreader', 'Newsreader']]) {
+    await scene('home');
+    const t = Date.now();
+    await look({ tfClock: font, tfNames: font, tfMenu: font, layout: 'list', apps: 'text', controls: 'text' });
+    report.fontLoads.push({ font, ms: Date.now() - t });
+    await sample(label + ' List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
+    await call('nav', 'right');
+    await sample(label + ' Home controls', ['up', 'up', 'down', 'down']);
+    await call('nav', 'left');
+  }
+  check('Orbitron and Newsreader load and apply within the appearance budget', report.fontLoads.length === 2 && report.fontLoads.every(r => r.ms < report.budgets.appearanceMaximumMs), report.fontLoads);
 
   const walls = await page.evaluate(() => CleanFrameWallpapers.map(w => w.id));
   const loadTimes = [];

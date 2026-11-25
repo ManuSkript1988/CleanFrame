@@ -300,8 +300,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 
 /* Settings overview: each group carries one short, committed summary. */
 /* Seven groups end at 932px, above the OK hint at 968px. */
-.settings-overview{position:absolute;left:112px;top:196px;width:1056px}
-.settings-group{width:100%;height:100px;padding:7px 32px 7px 28px;border-radius:20px;display:flex;align-items:center;justify-content:space-between;color:var(--ink);transition:background-color 140ms linear,color 140ms linear}
+.settings-overview{position:absolute;left:112px;top:196px;width:1056px;height:752px;overflow:hidden}
+.settings-group{width:100%;min-height:100px;padding:7px 32px 7px 28px;border-radius:20px;display:flex;align-items:center;justify-content:space-between;color:var(--ink);transition:background-color 140ms linear,color 140ms linear}
 .settings-group+.settings-group{margin-top:6px}
 .settings-group-copy{min-width:0;display:flex;flex-direction:column}
 .settings-group-name{font-size:40px;line-height:48px;font-weight:500;letter-spacing:-.6px}
@@ -522,6 +522,31 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .setting-choice.setting-retry{width:auto;min-height:60px;margin-top:16px;padding:10px 24px;font-size:28px;line-height:36px;border-radius:16px}
 /* HDMI shortcuts: the column scrolls programmatically so long lists keep focus visible. */
 .detail-hdmi .appearance-rows,.detail-hdmi-edit .appearance-rows{top:220px;height:724px;overflow:hidden}
+/* Every settings column scrolls programmatically, so larger menu text keeps focus visible. */
+.appearance-rows:not(.wallpaper-picker){bottom:124px;overflow:hidden}
+.detail-typography .appearance-rows{top:244px}
+/* Font size slider: Left/Right on the remote, or the end arrows by pointer. */
+.setting-choice.setting-slider{min-height:92px;padding:12px 16px}
+.type-step{display:flex;align-items:center;justify-content:center;flex:none;width:48px;height:48px;border-radius:24px;pointer-events:auto}
+.type-step .ico{width:28px;height:28px}
+.type-step.is-end{opacity:.32}
+/* While a font loads the slider is dimmed and its keys wait (see the hint line). */
+.setting-choice.setting-slider.is-busy .type-step:not(.is-end),.setting-choice.setting-slider.is-busy .type-track,.setting-choice.setting-slider.is-busy .type-value{opacity:.4}
+.type-track{position:relative;flex:1 1 auto;height:32px;margin:0 20px}
+.type-track::before{content:"";position:absolute;left:0;right:0;top:12px;height:8px;border-radius:4px;background:currentColor;opacity:.28}
+.type-tick{position:absolute;top:8px;width:4px;height:16px;margin-left:-2px;border-radius:2px;background:currentColor;opacity:.45}
+.type-thumb{position:absolute;top:0;width:32px;height:32px;margin-left:-16px;border-radius:16px;background:currentColor}
+.type-value{flex:none;min-width:116px;margin-left:12px;text-align:right;white-space:nowrap}
+/* Live sample in the right column: real CleanFrame text at the actual size. */
+.type-sample{display:flex;flex-direction:column;align-items:flex-start;color:var(--ink)}
+.type-sample-label{margin-bottom:6px;color:var(--mute)}
+.type-sample-clock .clock-sample{font-size:calc(48px * var(--type-clock-scale,1));line-height:calc(64px * var(--type-clock-scale,1));font-weight:500;letter-spacing:-1.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.type-sample-clock .clock-date-sample{font-size:calc(26px * var(--type-clock-scale,1));line-height:calc(34px * var(--type-clock-scale,1));font-weight:500;white-space:nowrap}
+.type-sample-row{display:flex;flex-wrap:wrap;align-items:baseline}
+.type-sample-row>*{margin-right:32px;white-space:nowrap}
+.type-sample-names span{font-weight:500;letter-spacing:-.8px}
+.type-sample-menu span{font-weight:500;letter-spacing:-.5px}
+.type-sample-text p{margin:0}
 .detail-hdmi-edit .setting-section+.setting-section{margin-top:20px}
 .detail-hdmi-edit .section-hdmi-image+.section-hdmi-image{margin-top:12px}
 .detail-hdmi-edit .setting-label{margin-bottom:8px}
@@ -592,24 +617,28 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 
 /* Selected fonts affect Home only. Settings, editors and status retain Manrope. */
 .home{font-synthesis:none}
-.font-custom .home{font-family:var(--font-ui-family),sans-serif;font-weight:var(--font-ui-weight)}
-.font-custom .home .ph-name{font-family:var(--font-display-family),sans-serif;font-weight:var(--font-display-weight);letter-spacing:-.01em}
-.font-custom .home .clock{position:relative;top:var(--font-clock-shift);font-family:var(--font-display-family),sans-serif;font-weight:var(--font-clock-weight);letter-spacing:-.01em}
-.font-custom .home .tile .label,.font-custom .home .app-focus-name,.font-custom .home .full-name{font-family:var(--font-primary-family),sans-serif;font-weight:var(--font-primary-weight);letter-spacing:0}
-.font-custom .home .u,.font-custom .home .util-focus-label,.font-custom .home .cap-title,.font-custom .home .dock-action,.font-custom .home .ph-action,.font-custom .home .btn,.font-custom .home .dock-empty p,.font-custom .home .ph-empty p{font-family:var(--font-ui-family),sans-serif;font-weight:var(--font-ui-weight);letter-spacing:0}
-.font-custom .home .cap-title{position:relative;top:var(--font-heading-shift)}
-.font-custom .home .full-name{position:relative;top:var(--font-full-name-shift)}
-.font-custom .home .quiet-utils .u-label{position:relative;top:var(--font-utility-shift)}
-.font-custom.l-list .home .quiet-utils .u-label{top:calc(-1px + var(--font-utility-shift))}
-.font-custom .home .ph-action>span,.font-custom .home .dock-action>span{position:relative;top:var(--font-action-shift)}
-.home .monogram,.home .cap-count,.home .cap-line:not(.full-name),.home .wall-keep,.home .error-chip{font-family:Manrope,Arial,sans-serif}
-.font-newsreader .home{font-variation-settings:"opsz" 28;font-optical-sizing:none}
-.font-newsreader .home .ph-name{font-variation-settings:"opsz" 72;font-optical-sizing:none}
-.font-newsreader .home .clock{font-variation-settings:"opsz" 48;font-optical-sizing:none}
-.font-newsreader .home .tile .label,.font-newsreader .home .app-focus-name,.font-newsreader .home .full-name{font-variation-settings:"opsz" 36;font-optical-sizing:none}
-.font-newsreader .home .cap-title,.font-newsreader .home .header-utils,.font-newsreader .home .dock-action,.font-newsreader .home .ph-action,.font-newsreader .home .btn,.font-newsreader .home .dock-empty p,.font-newsreader .home .ph-empty p{font-variation-settings:"opsz" 36}
-.font-newsreader .home .wall-keep{font-family:var(--font-ui-family),serif;font-weight:400;font-variation-settings:"opsz" 36;letter-spacing:0}
-.font-newsreader .home .header-utils .u-label,.font-newsreader .home .wall-keep{position:relative;top:var(--font-action-shift)}
+/* Four text areas: clock and date, app and shortcut names, menu text, other text. Each area's
+   family is a stage variable (Standard is Manrope); only a custom area changes weight and spacing. */
+.clock,.clock-date,.type-sample-clock .clock-sample,.type-sample-clock .clock-date-sample{font-family:var(--type-clock-family,Manrope),Arial,sans-serif}
+.ph-name,.tile .label,.app-focus-name,.full-name,.gt .label,.er-text,.eo-text,.hdmi-preview-name,.type-sample-names span{font-family:var(--type-names-family,Manrope),Arial,sans-serif}
+.u,.util-focus-label,.cap-title,.dock-action,.ph-action,.btn,.s-title,.s-label,.settings-title,.settings-group-name,.setting-choice,.setting-label,.er-rm,.er-num,.eo-verb,.eo-sep,.msg-title,.hdmi-name-field,.wallpaper-choice,.type-sample-menu span{font-family:var(--type-menu-family,Manrope),Arial,sans-serif}
+.s-sub,.s-count,.cap-count,.gt .state,.settings-group-value,.settings-overview-hint,.remote-key,.focus-status,.msg-line,.msg-note,.setting-reason,.setting-description,.appearance-desc,.settings-status,.hdmi-preview-meta,.wallpaper-preview-name,.wallpaper-count,.wallpaper-preview-state,.ed-order-break,.dock-empty p,.ph-empty p,.wall-keep,.cap-line:not(.full-name),.error-chip,.type-sample-text,.type-sample-text *{font-family:var(--type-text-family,Manrope),Arial,sans-serif}
+.type-clock-custom .clock,.type-clock-custom .clock-date,.type-clock-custom .type-sample-clock .clock-sample,.type-clock-custom .type-sample-clock .clock-date-sample{font-weight:var(--type-clock-w);letter-spacing:-.01em}
+.type-clock-custom .home .clock{position:relative;top:var(--font-clock-shift)}
+.type-names-custom .ph-name{font-weight:var(--type-names-display-w);letter-spacing:-.01em}
+.type-names-custom .tile .label,.type-names-custom .app-focus-name,.type-names-custom .full-name,.type-names-custom .gt .label,.type-names-custom .er-text,.type-names-custom .eo-text,.type-names-custom .hdmi-preview-name,.type-names-custom .type-sample-names span{font-weight:var(--type-names-w);letter-spacing:0}
+.type-names-custom .home .full-name{position:relative;top:var(--font-full-name-shift)}
+.type-menu-custom .u,.type-menu-custom .util-focus-label,.type-menu-custom .cap-title,.type-menu-custom .dock-action,.type-menu-custom .ph-action,.type-menu-custom .btn,.type-menu-custom .s-title,.type-menu-custom .s-label,.type-menu-custom .settings-title,.type-menu-custom .settings-group-name,.type-menu-custom .setting-choice,.type-menu-custom .setting-label,.type-menu-custom .er-rm,.type-menu-custom .er-num,.type-menu-custom .eo-verb,.type-menu-custom .eo-sep,.type-menu-custom .msg-title,.type-menu-custom .hdmi-name-field,.type-menu-custom .wallpaper-choice,.type-menu-custom .type-sample-menu span{font-weight:var(--type-menu-w);letter-spacing:0}
+.type-menu-custom .home .cap-title{position:relative;top:var(--font-heading-shift)}
+.type-menu-custom .home .quiet-utils .u-label{position:relative;top:var(--font-utility-shift)}
+.type-menu-custom.l-list .home .quiet-utils .u-label{top:calc(-1px + var(--font-utility-shift))}
+.type-menu-custom .home .ph-action>span,.type-menu-custom .home .dock-action>span{position:relative;top:var(--font-action-shift)}
+.type-text-custom .s-sub,.type-text-custom .s-count,.type-text-custom .cap-count,.type-text-custom .gt .state,.type-text-custom .settings-group-value,.type-text-custom .settings-overview-hint,.type-text-custom .remote-key,.type-text-custom .focus-status,.type-text-custom .msg-line,.type-text-custom .msg-note,.type-text-custom .setting-reason,.type-text-custom .setting-description,.type-text-custom .appearance-desc,.type-text-custom .settings-status,.type-text-custom .hdmi-preview-meta,.type-text-custom .wallpaper-preview-name,.type-text-custom .wallpaper-count,.type-text-custom .wallpaper-preview-state,.type-text-custom .ed-order-break,.type-text-custom .dock-empty p,.type-text-custom .ph-empty p,.type-text-custom .wall-keep,.type-text-custom .cap-line:not(.full-name),.type-text-custom .error-chip,.type-text-custom .type-sample-text,.type-text-custom .type-sample-text *{font-weight:var(--type-text-w);letter-spacing:0}
+.home .monogram{font-family:Manrope,Arial,sans-serif}
+/* Newsreader remains only for an area that already used it (clock or names). */
+.type-names-newsreader .ph-name{font-variation-settings:"opsz" 72;font-optical-sizing:none}
+.type-clock-newsreader .clock,.type-clock-newsreader .clock-date{font-variation-settings:"opsz" 48;font-optical-sizing:none}
+.type-names-newsreader .tile .label,.type-names-newsreader .app-focus-name,.type-names-newsreader .full-name,.type-names-newsreader .gt .label,.type-names-newsreader .er-text,.type-names-newsreader .eo-text,.type-names-newsreader .hdmi-preview-name,.type-names-newsreader .type-sample-names span{font-variation-settings:"opsz" 36;font-optical-sizing:none}
 .clock-digit{display:inline-block;width:var(--font-clock-digit);text-align:center;letter-spacing:0}
 .is-font-switch .home .ph-name,.is-font-switch .home .clock,.is-font-switch .home .tile .label,.is-font-switch .home .u-label,.is-font-switch .home .app-focus-name,.is-font-switch .home .util-focus-label{animation:font-in 160ms linear}
 @keyframes font-in{from{opacity:0}}
@@ -618,6 +647,30 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* Child margins preserve flex spacing on engines without flex gap.
    Auto-margin controls use padding to retain their minimum separation. */
 .caption>*+*{margin-top:4px}
+.clock-block{display:flex;flex-direction:column;align-items:center;align-self:flex-start}
+/* Icons beside text sit on the optical centre of that text (halfway between its capital and
+   lowercase centres). --type-<area>-optic is that offset as a fraction of the font size. */
+.a-both .ph-group .mark{margin-top:calc(var(--ph-size,88px) * var(--type-names-optic,0))}
+.quiet-utils.is-both .u .ico{position:relative;top:calc(28px * var(--type-menu-scale,1) * var(--type-menu-optic,0))}
+.er-name .mark,.eo .mark{top:calc(34px * var(--type-names-scale,1) * var(--type-names-optic,0))}
+.setting-choice:not(.setting-image) .setting-mark{position:relative;top:calc(38px * var(--type-menu-scale,1) * var(--type-menu-optic,0))}
+/* With a description below the name, the icon follows the name line, not the two-line block. */
+.setting-choice.has-description:not(.setting-image) .setting-mark{top:calc(38px * var(--type-menu-scale,1) * var(--type-menu-optic,0) - (36px * var(--type-text-scale,1) + 4px) / 2)}
+.setting-back .ico{position:relative;top:calc(28px * var(--type-menu-scale,1) * var(--type-menu-optic,0))}
+.appearance-desc .remote-key,.settings-overview-hint .remote-key{position:relative;top:calc(26px * var(--type-text-scale,1) * var(--type-text-optic,0))}
+.l-list .caption .clock-block{align-self:flex-end}
+/* The date belongs to the clock: smaller, directly below it, same colour treatment. */
+.clock-date{font-size:26px;line-height:34px;font-weight:500;letter-spacing:0;white-space:nowrap;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px rgba(0,0,0,.22)}
+/* The time keeps its designed position. The date is fitted to the time's width (--date-fit, see
+   fitDate in main.js); these negative side margins only guarantee that a date which is still
+   being measured can never widen the block and move the time. */
+.clock-block .clock-date{margin-left:calc(-40px * var(--type-clock-scale,1));margin-right:calc(-40px * var(--type-clock-scale,1))}
+.bg-dark .clock-date,.bg-light .clock-date{opacity:.72;text-shadow:none}
+.bg-photo.l-list .caption .clock-date{color:var(--tr-ink);text-shadow:var(--tr-shadow)}
+.bg-photo.l-list.has-clock-ink .caption .clock-date{color:var(--clock-ink);opacity:1;text-shadow:none}
+.bg-photo.l-dock.has-dock-clock-ink .caption .clock-date{color:var(--dock-clock-ink);opacity:1;text-shadow:none}
+.bg-photo.has-adaptive-ink.l-list .caption .clock-date{color:var(--tr-clock-ink)}
+.bg-photo.has-adaptive-ink.l-dock .caption .clock-date{color:var(--tl-clock-ink)}
 .warn>*+*{margin-left:12px}
 .utils>*+*{margin-left:8px}
 .quiet-utils>*+*{margin-left:20px}
@@ -654,3 +707,65 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .l-list .quiet-utils.is-text .u-content>*+*{margin-left:0;margin-right:0}
 .quiet-utils.is-text .u-content>*+*{margin-left:0}
 .l-list .quiet-utils.is-text .u .u-content>*+*{margin-right:0}
+/* Size factors per area, last so they override every base size; 100 % is the designed pixel size. */
+.clock{font-size:calc(48px * var(--type-clock-scale,1));line-height:calc(64px * var(--type-clock-scale,1))}
+.clock-date{font-size:calc(26px * var(--type-clock-scale,1) * var(--date-fit,1));line-height:calc(34px * var(--type-clock-scale,1))}
+.app-focus-name{font-size:calc(40px * var(--type-names-scale,1));line-height:calc(48px * var(--type-names-scale,1))}
+.l-dock .app-focus-name{font-size:calc(36px * var(--type-names-scale,1));line-height:calc(44px * var(--type-names-scale,1))}
+.cap-line.full-name{font-size:calc(30px * var(--type-names-scale,1));line-height:calc(40px * var(--type-names-scale,1))}
+.gt .label{font-size:calc(34px * var(--type-names-scale,1));line-height:calc(44px * var(--type-names-scale,1))}
+.er-text{font-size:calc(34px * var(--type-names-scale,1))}
+.eo-text{font-size:calc(34px * var(--type-names-scale,1))}
+.hdmi-preview-name{font-size:calc(32px * var(--type-names-scale,1));line-height:calc(42px * var(--type-names-scale,1))}
+.tile .t-name{font-size:calc(40px * var(--type-names-scale,1));line-height:calc(56px * var(--type-names-scale,1))}
+.gt .t-name{font-size:calc(40px * var(--type-names-scale,1));line-height:calc(56px * var(--type-names-scale,1))}
+.sc .t-name{font-size:calc(28px * var(--type-names-scale,1));line-height:calc(32px * var(--type-names-scale,1))}
+.type-sample-names span{font-size:calc(36px * var(--type-names-scale,1));line-height:calc(44px * var(--type-names-scale,1))}
+.u{font-size:calc(30px * var(--type-menu-scale,1))}
+.quiet-utils .u{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.l-list .quiet-utils.is-both .u{font-size:calc(28px * var(--type-menu-scale,1))}
+.util-focus-label{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.dock-action{font-size:calc(30px * var(--type-menu-scale,1))}
+.ph-action{font-size:calc(30px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.s-title{font-size:calc(56px * var(--type-menu-scale,1));line-height:calc(64px * var(--type-menu-scale,1))}
+.s-label{font-size:calc(30px * var(--type-menu-scale,1));line-height:calc(40px * var(--type-menu-scale,1))}
+.btn{font-size:calc(30px * var(--type-menu-scale,1))}
+.settings-group-name{font-size:calc(40px * var(--type-menu-scale,1));line-height:calc(48px * var(--type-menu-scale,1))}
+.er-num{font-size:calc(28px * var(--type-menu-scale,1))}
+.er-rm{font-size:calc(30px * var(--type-menu-scale,1))}
+.eo-sep{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(60px * var(--type-menu-scale,1))}
+.msg-title{font-size:calc(72px * var(--type-menu-scale,1));line-height:calc(84px * var(--type-menu-scale,1))}
+.settings-title{font-size:calc(56px * var(--type-menu-scale,1));line-height:calc(68px * var(--type-menu-scale,1))}
+.setting-label{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.setting-choice{font-size:calc(38px * var(--type-menu-scale,1));line-height:calc(48px * var(--type-menu-scale,1))}
+.is-horizontal .setting-choice{font-size:calc(36px * var(--type-menu-scale,1))}
+.setting-choice.setting-back{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.setting-choice.setting-retry{font-size:calc(28px * var(--type-menu-scale,1));line-height:calc(36px * var(--type-menu-scale,1))}
+.section-hdmi-port .setting-choice{font-size:calc(30px * var(--type-menu-scale,1));line-height:calc(40px * var(--type-menu-scale,1))}
+.hdmi-name-field{font-size:calc(38px * var(--type-menu-scale,1));line-height:calc(48px * var(--type-menu-scale,1))}
+.wallpaper-choice{font-size:calc(36px * var(--type-menu-scale,1));line-height:calc(48px * var(--type-menu-scale,1))}
+.type-sample-menu span{font-size:calc(38px * var(--type-menu-scale,1));line-height:calc(48px * var(--type-menu-scale,1))}
+.s-sub{font-size:calc(30px * var(--type-text-scale,1));line-height:calc(40px * var(--type-text-scale,1))}
+.s-count,.cap-count{font-size:calc(24px * var(--type-text-scale,1));line-height:calc(40px * var(--type-text-scale,1))}
+.gt .state{font-size:calc(28px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.settings-group-value{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(34px * var(--type-text-scale,1))}
+.settings-overview-hint{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.remote-key{font-size:calc(21px * var(--type-text-scale,1));line-height:calc(28px * var(--type-text-scale,1))}
+.focus-status{font-size:calc(22px * var(--type-text-scale,1));line-height:calc(28px * var(--type-text-scale,1))}
+.msg-line{font-size:calc(36px * var(--type-text-scale,1));line-height:calc(52px * var(--type-text-scale,1))}
+.msg-note{font-size:calc(30px * var(--type-text-scale,1));line-height:calc(42px * var(--type-text-scale,1))}
+.setting-reason{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.setting-description{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.appearance-desc{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.settings-status{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.hdmi-preview-meta{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.wallpaper-preview-name{font-size:calc(32px * var(--type-text-scale,1));line-height:calc(42px * var(--type-text-scale,1))}
+.wallpaper-count{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.wallpaper-preview-state{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}
+.ed-order-break{font-size:calc(20px * var(--type-text-scale,1));line-height:calc(24px * var(--type-text-scale,1))}
+.dock-empty p{font-size:calc(36px * var(--type-text-scale,1))}
+.ph-empty p{font-size:calc(64px * var(--type-text-scale,1));line-height:calc(88px * var(--type-text-scale,1))}
+.wall-keep{font-size:calc(30px * var(--type-text-scale,1))}
+.dock-action.has-local-status>span,.er-rm.has-local-status>span{font-size:calc(26px * var(--type-text-scale,1))}
+.u.has-local-status .u-label,.btn.has-local-status>span{font-size:calc(26px * var(--type-text-scale,1))}
+.type-sample-text{font-size:calc(26px * var(--type-text-scale,1));line-height:calc(36px * var(--type-text-scale,1))}

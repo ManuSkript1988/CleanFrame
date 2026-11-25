@@ -34,5 +34,41 @@
     "bytes": 4394,
     "sha256": "fdfad38143ec470553cae82a1e45320bdd1b9ec70415d37bd0171051d8a4ded8",
     "unchanged_upstream_bytes": true
+  },
+  {
+    "family": "orbitron",
+    "file": "orbitron/Orbitron-Variable.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/7af0d90b4d532ffa4b041937b560c6df4e7b1e95/ofl/orbitron/Orbitron%5Bwght%5D.ttf",
+    "accessed": "2026-11-18",
+    "bytes": 38576,
+    "sha256": "f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd",
+    "unchanged_upstream_bytes": true
+  },
+  {
+    "family": "orbitron",
+    "file": "orbitron/OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/7af0d90b4d532ffa4b041937b560c6df4e7b1e95/ofl/orbitron/OFL.txt",
+    "accessed": "2026-11-18",
+    "bytes": 4426,
+    "sha256": "ab609b0e110d622435ff337cdf233288556e011bbf9bd0550be98846c0630819",
+    "unchanged_upstream_bytes": true
+  },
+  {
+    "family": "roboto",
+    "file": "roboto/Roboto-Variable.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/7af0d90b4d532ffa4b041937b560c6df4e7b1e95/ofl/roboto/Roboto%5Bwdth%2Cwght%5D.ttf",
+    "accessed": "2026-11-18",
+    "bytes": 488584,
+    "sha256": "d7598e12c5dbef095ff8272cfc55da0250bd07fbdecbac8a530b9b277872a134",
+    "unchanged_upstream_bytes": true
+  },
+  {
+    "family": "roboto",
+    "file": "roboto/OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/7af0d90b4d532ffa4b041937b560c6df4e7b1e95/ofl/roboto/OFL.txt",
+    "accessed": "2026-11-18",
+    "bytes": 4394,
+    "sha256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41",
+    "unchanged_upstream_bytes": true
   }
 ]

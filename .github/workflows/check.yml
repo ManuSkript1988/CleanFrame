@@ -30,4 +30,7 @@ jobs:
       - run: npm run check:public
       - run: npx playwright install --with-deps chromium
       - run: npm run check:browser
+      # Compares Standard at 100 % with the reference commit in scripts/typography-reference.json.
+      # It needs that commit's objects; fetch-depth: 0 above provides the full history.
+      - run: npm run check:typography
       - run: npm run export:public

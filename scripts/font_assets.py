@@ -1,7 +1,7 @@
 """Build the exact private-font overlay used by preview and local packaging.
 
 Pangram binaries remain in ignored .local/ storage. A public checkout ships
-Manrope, Geist and Newsreader. Complete local Pangram pairs are added directly
+Manrope, Geist, Newsreader, Orbitron and Roboto. Complete local Pangram pairs are added directly
 to the widget ZIP; they are never copied into app/.
 """
 from pathlib import Path
