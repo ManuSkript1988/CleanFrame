@@ -37,6 +37,15 @@ def file_hash(path):
     return sha256(path.read_bytes()).hexdigest()
 
 
+def write_sources(path, items):
+    """Write the staged SOURCES.json with LF line endings on every platform.
+
+    Text-mode writes turn '\\n' into CRLF on Windows; writing bytes keeps the file identical
+    to the LF format of app/assets/wallpapers/SOURCES.json.
+    """
+    path.write_bytes((json.dumps(items, indent=2) + '\n').encode('utf-8'))
+
+
 def prepare_legacy(path, id):
     # Keep the reviewed nine-photo recipe unchanged, including aspect ratio.
     for tag, width, quality in [('', 1920, 87), ('-thumb', 512, 80)]:
@@ -110,7 +119,7 @@ def main():
         ))
         print(id, 'background', background.stat().st_size, 'thumbnail', thumbnail.stat().st_size)
     # A partial run records only its selected IDs; app/SOURCES.json is never changed.
-    (OUTPUT / 'SOURCES.json').write_text(json.dumps(items, indent=2) + '\n')
+    write_sources(OUTPUT / 'SOURCES.json', items)
     print('Generated', len(items), 'backgrounds and thumbnails in', OUTPUT)
     print('Source bytes', sum(x['originalBytes'] for x in items),
           'TV background bytes', sum(x['backgroundBytes'] for x in items))

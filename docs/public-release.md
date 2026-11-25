@@ -6,7 +6,7 @@ The original publication record below was prepared 20 October 2026. For the curr
 
 That initial public source contained the 0.6.1 app, public-font screenshot, development tools, browser tests, setup notes and asset notices. Research folders, design studies, draft writing, unused Grid/optics code and obsolete generated images were removed after the owner's approval. Recoverable copies remain outside the public source.
 
-Paid Pangram fonts, signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. Public preview and export use only Manrope, Geist, Newsreader, Orbitron and Roboto. The public font check also verifies the expected font files and hashes.
+Paid Pangram fonts, signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. Public preview and export use only Manrope, Geist, Newsreader, Orbitron and Roboto. The public font check also verifies the expected font files and hashes, and that each licence text recorded in `app/assets/fonts/SOURCES.json` has exactly its upstream bytes (no CRLF conversion), so Windows and Linux exports ship identical licence files.
 
 ## Asset review
 

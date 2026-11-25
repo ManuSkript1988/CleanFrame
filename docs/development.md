@@ -49,6 +49,10 @@ With no `.local/signing.json`, the original maintainer defaults remain: `.local/
 
 The initial custom XML-signature implementation was rejected by the TV. Use the official SDK packager for future builds; the installed test was signed with Tizen CLI 2.5.25.
 
+## Line endings
+
+`.gitattributes` gives every text file LF in the repository and in each working copy, also on Windows where Git for Windows defaults to `core.autocrlf=true`. This keeps public exports identical across platforms and keeps CR characters out of the shell scripts that `scripts/native-home/run.py` copies to the TV. Fonts and images are `binary`. The font licence texts are `-text`, so Git never converts them and they keep the upstream bytes recorded in `app/assets/fonts/SOURCES.json`. `npm run check:public` verifies these rules, the licence hashes and the absence of CRLF in text files. `scripts/prepare-wallpapers.py` writes its generated `.local/materials/wallpapers/SOURCES.json` explicitly with LF line endings (as bytes, not in text mode), so a copy reviewed into `app/assets/wallpapers/` stays LF on Windows too; a regression test in `scripts/test-tools.py` covers this. A Windows working copy made before `.gitattributes` existed may still contain CRLF; converting only files whose LF bytes equal their index blob, then checking every file with `git hash-object --no-filters` against `git ls-files -s`, changes no content.
+
 ## Another checkout or Mac
 
 Install the official [Samsung TV SDK](https://developer.samsung.com/smarttv/develop/getting-started/setting-up-sdk/installing-tv-sdk.html) and select its path in `.local/signing.json`. The signing runner uses POSIX terminal/process APIs and is supported by these tools on macOS/Linux; Windows needs its own adapted runner. To retain in-place updates to your own existing app, securely transfer its author certificate and password. Keep those credentials local.

@@ -1,0 +1,19 @@
+# Text files use LF in the repository and in every working copy (Windows, macOS, Linux).
+# Shell scripts copied to the TV and the Git hooks must not gain CR characters.
+* text=auto eol=lf
+
+# Binary assets: never converted and never diffed as text.
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.webp  binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.wgt   binary
+
+# Font licences must keep the exact upstream bytes recorded in app/assets/fonts/SOURCES.json
+# (checked by npm run check:public), so Git never converts them in either direction.
+app/assets/fonts/*/OFL.txt -text
+app/assets/manrope-OFL.txt -text

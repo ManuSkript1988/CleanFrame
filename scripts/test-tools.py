@@ -338,6 +338,83 @@ with zipfile.ZipFile(target, 'a') as archive:
         git('-c', 'user.name=Offline Test', '-c', 'user.email=offline@example.invalid', 'commit', '-qm', 'Rename fixture')
         self.assertIn('reachable Git history: old-store.pfx', check().stderr)
 
+    def test_public_check_licence_bytes_and_line_endings(self):
+        # A fixture repository with the real fonts, licences, SOURCES.json and .gitattributes.
+        names = ['scripts/check-public.py', 'scripts/font_assets.py', 'scripts/local_config.py', 'scripts/private_files.py',
+                 '.gitattributes', 'app/assets/manrope.woff2', 'app/assets/manrope-OFL.txt', 'app/assets/fonts/SOURCES.json']
+        names += ['app/assets/fonts/' + r['file'] for r in json.loads((ROOT / 'app/assets/fonts/SOURCES.json').read_text())]
+        for name in names:
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / name).read_bytes())
+        (self.root / 'app/sample.js').write_bytes(b'var sample = 1;\n')
+        git_env = {name: value for name, value in os.environ.items() if not name.startswith('GIT_')}
+        git_env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        def git(*args):
+            return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgSign=false', *args],
+                                  cwd=self.root, check=True, capture_output=True, env=git_env)
+        def check():
+            return subprocess.run([sys.executable, '-B', 'scripts/check-public.py'], cwd=self.root, capture_output=True, text=True, env=git_env)
+        git('init', '-q', '--template=')
+        git('add', '-A')
+        git('-c', 'user.name=Offline Test', '-c', 'user.email=offline@example.invalid', 'commit', '-qm', 'Fixture')
+        result = check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        licence = self.root / 'app/assets/fonts/geist/OFL.txt'
+        original = licence.read_bytes()
+        # A Windows checkout without .gitattributes turns the licence into CRLF.
+        licence.write_bytes(original.replace(b'\n', b'\r\n'))
+        result = check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Size differs from SOURCES.json', result.stderr)
+        self.assertIn('(CRLF line endings; see .gitattributes): app/assets/fonts/geist/OFL.txt', result.stderr)
+        # Same size, different bytes.
+        licence.write_bytes(original[:-2] + (b'X' if original[-2:-1] != b'X' else b'Y') + original[-1:])
+        self.assertIn('SHA-256 differs from SOURCES.json: app/assets/fonts/geist/OFL.txt', check().stderr)
+        licence.unlink()
+        self.assertIn('Missing file recorded in SOURCES.json: app/assets/fonts/geist/OFL.txt', check().stderr)
+        licence.write_bytes(original)
+        self.assertEqual(check().returncode, 0)
+        # A text file with CRLF in the working copy would reach a public export.
+        (self.root / 'app/sample.js').write_bytes(b'var sample = 1;\r\n')
+        self.assertIn('Text files with CRLF line endings in the working copy (1): app/sample.js', check().stderr)
+        (self.root / 'app/sample.js').write_bytes(b'var sample = 1;\n')
+        # Without .gitattributes nothing protects licences, fonts or LF line endings. Git keeps using
+        # the index copy while only the working file is missing, so remove it from the index too.
+        git('rm', '-q', '--cached', '.gitattributes')
+        (self.root / '.gitattributes').unlink()
+        result = check().stderr
+        self.assertIn('Missing .gitattributes', result)
+        self.assertIn('Licence text is not protected from line-ending conversion (-text): app/assets/fonts/geist/OFL.txt', result)
+        self.assertIn('Binary files not marked binary in .gitattributes (5): ', result)
+        self.assertIn('app/assets/manrope.woff2', result)
+        self.assertIn('Text files without eol=lf in .gitattributes', result)
+        self.assertIn('app/sample.js', result)
+        self.assertNotIn('Traceback', result)
+
+    def test_wallpaper_sources_are_written_with_lf(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('prepare_wallpapers', ROOT / 'scripts/prepare-wallpapers.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        reference = ROOT / 'app/assets/wallpapers/SOURCES.json'
+        items = json.loads(reference.read_bytes())
+        target = self.root / 'SOURCES.json'
+        # Emulate Windows text mode on every platform: a plain write_text() turns each '\n' into
+        # CRLF there, so the staged file must not depend on it.
+        original_write_text = Path.write_text
+        def windows_write_text(path, data, encoding=None, errors=None, newline=None):
+            return original_write_text(path, data if newline == '\n' else data.replace('\n', '\r\n'),
+                                       encoding=encoding, errors=errors, newline='\n')
+        with patch.object(Path, 'write_text', windows_write_text):
+            module.write_sources(target, items)
+        written = target.read_bytes()
+        self.assertNotIn(b'\r', written)
+        self.assertEqual(json.loads(written), items)
+        self.assertEqual(len(items), 15)
+        # The same data reproduces the committed LF file byte for byte, including indentation.
+        self.assertEqual(written, reference.read_bytes())
+
     def test_signing_rejects_prompts_and_times_out(self):
         cli = self.root / 'fake-sdk'
         cli.write_text('#!' + sys.executable + '\nprint("Password:", end="", flush=True)\ninput()\n')
